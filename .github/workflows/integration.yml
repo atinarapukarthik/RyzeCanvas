@@ -1,0 +1,135 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  integration-tests:
+    name: Run Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ryzecanvas
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: ryzecanvas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Backend Dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Start Backend Server
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://ryzecanvas:testpassword@localhost:5432/ryzecanvas_test
+          SECRET_KEY: test-integration-secret-key
+          ALGORITHM: HS256
+          ACCESS_TOKEN_EXPIRE_MINUTES: 30
+        run: |
+          python -m app.main &
+          sleep 10
+
+      - name: Build Frontend
+        working-directory: ./frontend
+        run: npm run build
+
+      - name: Start Frontend Server
+        working-directory: ./frontend
+        run: |
+          npm run preview &
+          sleep 5
+
+      - name: Run Integration Tests
+        run: |
+          echo "Integration tests would run here"
+          curl -f http://localhost:8000/health || exit 1
+          curl -f http://localhost:4173 || exit 1
+
+      - name: Run E2E Tests (Placeholder)
+        working-directory: ./frontend
+        run: |
+          echo "E2E tests with Playwright/Cypress would run here"
+          # npx playwright test
+
+  docker-compose-test:
+    name: Docker Compose Integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create docker-compose.yml
+        run: |
+          cat > docker-compose.test.yml << 'EOF'
+          version: '3.8'
+          services:
+            backend:
+              build: ./backend
+              ports:
+                - "8000:8000"
+              environment:
+                - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/ryzecanvas
+                - SECRET_KEY=test-secret-key
+              depends_on:
+                - db
+            
+            db:
+              image: postgres:16
+              environment:
+                - POSTGRES_USER=postgres
+                - POSTGRES_PASSWORD=postgres
+                - POSTGRES_DB=ryzecanvas
+              ports:
+                - "5432:5432"
+          EOF
+
+      - name: Build and Start Services
+        run: docker-compose -f docker-compose.test.yml up -d
+
+      - name: Wait for Services
+        run: sleep 15
+
+      - name: Test Backend Health
+        run: curl -f http://localhost:8000/health || exit 1
+
+      - name: Cleanup
+        if: always()
+        run: docker-compose -f docker-compose.test.yml down -v

@@ -1,0 +1,7 @@
+# Ignore build artifacts
+dist/
+
+# Ignore lock files during Docker build (we use package.json)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
