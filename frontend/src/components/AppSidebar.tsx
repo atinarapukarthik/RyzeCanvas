@@ -1,7 +1,9 @@
+"use client";
+
 import { Wand2, History, Settings, ShieldCheck, LogOut } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuthStore } from "@/stores/authStore";
-import { useNavigate } from "react-router-dom";
+import { useRouter } from "next/navigation";
 import {
   Sidebar,
   SidebarContent,
@@ -24,11 +26,11 @@ const navItems = [
 export function AppSidebar() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
-  const navigate = useNavigate();
+  const router = useRouter();
 
   const handleLogout = () => {
     logout();
-    navigate("/login");
+    router.push("/login"); // or just reload/clear cookies
   };
 
   return (

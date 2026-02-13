@@ -1,9 +1,10 @@
-import { Outlet } from "react-router-dom";
+"use client";
+
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
-export function AppLayout() {
+export function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <ProtectedRoute>
       <SidebarProvider>
@@ -14,7 +15,7 @@ export function AppLayout() {
               <SidebarTrigger />
             </header>
             <main className="flex-1 overflow-auto">
-              <Outlet />
+              {children}
             </main>
           </div>
         </div>

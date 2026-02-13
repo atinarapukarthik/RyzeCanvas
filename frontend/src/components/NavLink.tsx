@@ -1,28 +1,34 @@
-import { NavLink as RouterNavLink, NavLinkProps } from "react-router-dom";
-import { forwardRef } from "react";
-import { cn } from "@/lib/utils";
+"use client";
 
-interface NavLinkCompatProps extends Omit<NavLinkProps, "className"> {
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { cn } from "@/lib/utils";
+import { forwardRef } from "react";
+
+interface NavLinkProps extends Omit<React.ComponentPropsWithoutRef<typeof Link>, "className" | "href"> {
+  to: string; // Used as href
   className?: string;
   activeClassName?: string;
-  pendingClassName?: string;
+  end?: boolean;
 }
 
-const NavLink = forwardRef<HTMLAnchorElement, NavLinkCompatProps>(
-  ({ className, activeClassName, pendingClassName, to, ...props }, ref) => {
+export const NavLink = forwardRef<HTMLAnchorElement, NavLinkProps>(
+  ({ className, activeClassName, to, end, ...props }, ref) => {
+    const pathname = usePathname();
+
+    const isActive = end
+      ? pathname === to
+      : pathname === to || pathname?.startsWith(to + "/");
+
     return (
-      <RouterNavLink
+      <Link
         ref={ref}
-        to={to}
-        className={({ isActive, isPending }) =>
-          cn(className, isActive && activeClassName, isPending && pendingClassName)
-        }
+        href={to}
+        className={cn(className, isActive && activeClassName)}
         {...props}
       />
     );
-  },
+  }
 );
 
 NavLink.displayName = "NavLink";
-
-export { NavLink };

@@ -264,4 +264,25 @@ For questions or issues:
 
 **Migration completed successfully! 🎉**
 
+
 All files have been reorganized, CI/CD pipelines are configured, and the project is production-ready.
+
+## 🔄 Frontend Migration to Next.js 16 (Feb 13, 2026)
+
+Migrated the frontend from Vite/React to Next.js 16 App Router to enhance security and performance.
+
+### Changes
+- **Framework**: Converted from Vite to Next.js 16.
+- **Routing**: Migrated to App Router (`app/` directory).
+- **Navigation**: Updated `react-router-dom` to `next/navigation`.
+- **Styling**: Configured Tailwind CSS 3 (compatibility mode).
+- **Testing**: Configured Vitest for Next.js environment.
+- **Security**: Enabled Server Components architecture to support secure server-side scripting.
+
+### Actions Taken
+- Renamed `frontend` to `frontend-backup`.
+- Created new `frontend` with Next.js 16.
+- Migrated all components, hooks, stores, and pages.
+- Updated authentication protection to use client-side checks compatible with SSR.
+- Verified build and tests.
+
