@@ -49,3 +49,10 @@ class ProjectResponseWithOwner(ProjectResponse):
     """Schema for project responses with owner details."""
     owner_email: Optional[str] = None
     owner_name: Optional[str] = None
+
+
+class GithubRepoCreate(BaseModel):
+    """Schema for creating a GitHub repository from a project."""
+    repo_name: str
+    private: bool = False
+    description: Optional[str] = None

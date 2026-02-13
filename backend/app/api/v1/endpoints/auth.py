@@ -12,7 +12,7 @@ from app.api.deps import get_db, get_current_user
 from app.core.config import settings
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.user import User
-from app.schemas.user import UserCreate, UserResponse
+from app.schemas.user import UserCreate, UserResponse, UserUpdate
 from app.schemas.token import Token
 
 
@@ -109,4 +109,32 @@ async def get_current_user_info(
     Requires valid JWT token in Authorization header.
     Returns details of the authenticated user.
     """
+
+@router.put("/me", response_model=UserResponse)
+async def update_user_me(
+    user_in: UserUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update current user profile.
+    """
+    # Exclude unset fields
+    update_data = user_in.model_dump(exclude_unset=True)
+    
+    # Do not allow updating password straight via this endpoint if separate logic is preferred,
+    # but for simplicity we allow it if provided (hashing it).
+    if "password" in update_data and update_data["password"]:
+        hashed_password = get_password_hash(update_data["password"])
+        del update_data["password"]
+        current_user.hashed_password = hashed_password
+        
+    for field, value in update_data.items():
+        setattr(current_user, field, value)
+        
+    db.add(current_user)
+    await db.commit()
+    await db.refresh(current_user)
+    
     return current_user
+

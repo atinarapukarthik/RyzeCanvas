@@ -21,6 +21,10 @@ class User(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
+    # GitHub Integration
+    github_token = Column(String, nullable=True)
+    github_username = Column(String, nullable=True)
+    
     # Relationships
     projects = relationship("Project", back_populates="owner", cascade="all, delete-orphan")
     

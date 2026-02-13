@@ -11,12 +11,14 @@ import { toast } from "sonner";
 import Prism from "prismjs";
 import "prismjs/components/prism-jsx";
 import "prismjs/themes/prism-tomorrow.css";
+import { GitHubConnect } from "@/components/GitHubConnect";
 
 export default function Studio() {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState("");
     const [thinking, setThinking] = useState(false);
     const [currentCode, setCurrentCode] = useState("");
+    const [currentProject, setCurrentProject] = useState<any>(null); // Should type properly
     const scrollRef = useRef<HTMLDivElement>(null);
     const codeRef = useRef<HTMLElement>(null);
     const [mounted, setMounted] = useState(false);
@@ -52,6 +54,7 @@ export default function Studio() {
             };
             setMessages((m) => [...m, aiMsg]);
             setCurrentCode(project.code);
+            setCurrentProject(project);
             toast.success("UI generated successfully!");
         } catch {
             toast.error("Generation failed");
@@ -130,7 +133,8 @@ export default function Studio() {
                             </TabsList>
                             <div className="flex items-center gap-1">
                                 <Button variant="ghost" size="sm" onClick={copyCode} disabled={!currentCode}><Copy className="h-3.5 w-3.5 mr-1" />Copy</Button>
-                                <Button variant="ghost" size="sm"><GitFork className="h-3.5 w-3.5 mr-1" />Fork</Button>
+                                {/* GitHub Connect Button */}
+                                <GitHubConnect projectId={currentProject?.id} projectCode={currentCode} />
                                 <Button variant="ghost" size="sm"><Rocket className="h-3.5 w-3.5 mr-1" />Deploy</Button>
                             </div>
                         </div>

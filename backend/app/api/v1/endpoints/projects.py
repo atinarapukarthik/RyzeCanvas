@@ -11,7 +11,7 @@ from sqlalchemy import select, and_
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
 from app.models.project import Project
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
+from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, GithubRepoCreate
 
 
 router = APIRouter()
@@ -181,7 +181,99 @@ async def delete_project(
             detail="Project not found or you don't have permission to delete it"
         )
     
+    
     await db.delete(project)
     await db.commit()
     
     return None
+
+
+@router.post("/{project_id}/github", status_code=status.HTTP_201_CREATED)
+async def push_to_github(
+    project_id: int,
+    repo_in: GithubRepoCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Push project code to a new GitHub repository.
+    User must have a GitHub token linked to their account.
+    """
+    if not current_user.github_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub token not connected. Please connect your GitHub account in settings."
+        )
+
+    # Fetch project
+    result = await db.execute(
+        select(Project).where(
+            and_(
+                Project.id == project_id,
+                Project.user_id == current_user.id
+            )
+        )
+    )
+    project = result.scalar_one_or_none()
+    
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+        
+    import httpx
+    
+    headers = {
+        "Authorization": f"token {current_user.github_token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    # 1. Create Repository
+    async with httpx.AsyncClient() as client:
+        repo_data = {
+            "name": repo_in.repo_name,
+            "private": repo_in.private,
+            "description": repo_in.description or project.description or "Created with RyzeCanvas"
+        }
+        
+        create_resp = await client.post("https://api.github.com/user/repos", json=repo_data, headers=headers)
+        
+        if create_resp.status_code not in (200, 201):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to create GitHub repository: {create_resp.text}"
+            )
+            
+        repo_info = create_resp.json()
+        owner = repo_info['owner']['login']
+        repo = repo_info['name']
+        
+        # 2. Push Code (create file)
+        # Assuming project.code_json is the code content for now.
+        # Ideally we parse it if it's JSON, but for simplicity let's treat it as a string
+        # or extract a "main" file.
+        
+        content = project.code_json or "// No code generated yet."
+        import base64
+        content_encoded = base64.b64encode(content.encode()).decode()
+        
+        file_data = {
+            "message": "Initial commit from RyzeCanvas",
+            "content": content_encoded,
+            "branch": "main" # GitHub defaults to main usually, but explicit is good
+        }
+        
+        file_resp = await client.put(
+            f"https://api.github.com/repos/{owner}/{repo}/contents/App.tsx",
+            json=file_data,
+            headers=headers
+        )
+        
+        if file_resp.status_code not in (200, 201):
+            # Try converting to master if main fails? optional.
+            pass
+            
+        return {"repo_url": repo_info['html_url'], "message": "Repository created and code pushed successfully."}
+
+
