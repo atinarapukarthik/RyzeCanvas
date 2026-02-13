@@ -4,18 +4,30 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
-import { useState } from "react";
+import { ThemeProvider } from "next-themes";
+import { useState, useEffect } from "react";
 
 export function Providers({ children }: { children: React.ReactNode }) {
     const [queryClient] = useState(() => new QueryClient());
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    if (!mounted) {
+        return <>{children}</>;
+    }
 
     return (
         <QueryClientProvider client={queryClient}>
-            <TooltipProvider>
-                {children}
-                <Toaster />
-                <Sonner />
-            </TooltipProvider>
+            <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+                <TooltipProvider>
+                    {children}
+                    <Toaster />
+                    <Sonner />
+                </TooltipProvider>
+            </ThemeProvider>
         </QueryClientProvider>
     );
 }
