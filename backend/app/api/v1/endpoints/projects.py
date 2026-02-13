@@ -33,13 +33,26 @@ async def create_project(
     
     Project is automatically assigned to the current authenticated user.
     """
+    from app.services.ai_service import AIService
+    
+    # Generate code if not provided or if it's the default
+    code = project_in.code_json
+    if not code or code == "// Generated code":
+        code = await AIService.generate_code(
+            prompt=project_in.description or project_in.title,
+            provider=project_in.provider or "gemini",
+            model=project_in.model
+        )
+
     # Create new project
     db_project = Project(
         title=project_in.title,
         description=project_in.description,
-        code_json=project_in.code_json,
+        code_json=code,
         user_id=current_user.id,
-        is_public=project_in.is_public
+        is_public=project_in.is_public,
+        provider=project_in.provider,
+        model=project_in.model
     )
     
     db.add(db_project)

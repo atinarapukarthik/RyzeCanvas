@@ -20,11 +20,10 @@ import { toast } from "sonner";
 
 interface GitHubConnectProps {
     projectId?: string;
-    projectCode?: string;
     onSuccess?: (url: string) => void;
 }
 
-export function GitHubConnect({ projectId, projectCode, onSuccess }: GitHubConnectProps) {
+export function GitHubConnect({ projectId, onSuccess }: GitHubConnectProps) {
     const { user, setUser, token } = useAuthStore();
     const [isOpen, setIsOpen] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -62,8 +61,8 @@ export function GitHubConnect({ projectId, projectCode, onSuccess }: GitHubConne
             toast.success(result.message);
             if (onSuccess) onSuccess(result.repo_url);
             setIsOpen(false);
-        } catch (error: any) {
-            toast.error(error.message || "Failed to push to GitHub");
+        } catch (error: unknown) {
+            toast.error("Failed to push to GitHub", { description: error instanceof Error ? error.message : "An unknown error occurred." });
         } finally {
             setLoading(false);
         }

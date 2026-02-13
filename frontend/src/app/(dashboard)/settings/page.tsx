@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuthStore } from "@/stores/authStore";
-import { useUIStore } from "@/stores/uiStore";
+import { useTheme } from "next-themes";
 import { Moon, Sun, User } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -10,11 +10,12 @@ import { useEffect, useState } from "react";
 
 export default function SettingsPage() {
     const user = useAuthStore((s) => s.user);
-    const { theme, toggleTheme } = useUIStore();
+    const { theme, setTheme } = useTheme();
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
-        setMounted(true);
+        const timer = setTimeout(() => setMounted(true), 0);
+        return () => clearTimeout(timer);
     }, []);
 
     if (!mounted) return null;
@@ -66,7 +67,7 @@ export default function SettingsPage() {
                             <p className="text-xs text-muted-foreground">Toggle between light and dark theme</p>
                         </div>
                     </div>
-                    <Switch checked={theme === "dark"} onCheckedChange={() => toggleTheme()} />
+                    <Switch checked={theme === "dark"} onCheckedChange={() => setTheme(theme === "dark" ? "light" : "dark")} />
                 </div>
             </div>
         </div>

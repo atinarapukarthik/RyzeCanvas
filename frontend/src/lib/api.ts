@@ -1,8 +1,9 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // ============================================================
 // RyzeCanvas API Layer — Real Implementation
 // ============================================================
 
-import { useAuthStore } from "@/stores/authStore"; // Access store for token
+
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
@@ -19,7 +20,7 @@ export interface User {
 }
 
 // Helper to handle mixed user type from backend vs frontend expectation
-function mapUser(apiUser: any): User {
+function mapUser(apiUser: Record<string, any>): User {
   return {
     id: apiUser.id.toString(),
     email: apiUser.email,
@@ -54,7 +55,7 @@ export interface ChatMessage {
   timestamp: string;
 }
 
-function mapProject(apiProject: any): Project {
+function mapProject(apiProject: Record<string, any>): Project {
   return {
     id: apiProject.id.toString(),
     title: apiProject.title,
@@ -132,7 +133,7 @@ export async function register(email: string, password: string, fullName: string
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, full_name: fullName }),
   });
-  const data = await handleResponse<any>(res);
+  const data = await handleResponse<Record<string, any>>(res);
   return mapUser(data);
 }
 
@@ -144,7 +145,7 @@ export async function updateProfile(data: Partial<User> & { password?: string })
     headers: getHeaders(),
     body: JSON.stringify(data),
   });
-  const userData = await handleResponse<any>(res);
+  const userData = await handleResponse<Record<string, any>>(res);
   return mapUser(userData);
 }
 
@@ -155,17 +156,19 @@ export async function fetchProjects(): Promise<Project[]> {
   const res = await fetch(`${API_BASE_URL}/projects/`, {
     headers: getHeaders(),
   });
-  const data = await handleResponse<any[]>(res);
+  const data = await handleResponse<Record<string, any>[]>(res);
   return data.map(mapProject);
 }
 
-export async function createProject(prompt: string, code?: string): Promise<Project> {
+export async function createProject(prompt: string, options?: { code?: string, provider?: string, model?: string }): Promise<Project> {
   // Mapping prompt to description, code to code_json
   const payload = {
     title: prompt.slice(0, 30) || "New Project",
     description: prompt,
-    code_json: code || "// Generated code",
-    is_public: false
+    code_json: options?.code || "// Generated code",
+    is_public: false,
+    provider: options?.provider || "gemini",
+    model: options?.model || "gemini-1.5-pro"
   };
 
   const res = await fetch(`${API_BASE_URL}/projects/`, {
@@ -173,7 +176,7 @@ export async function createProject(prompt: string, code?: string): Promise<Proj
     headers: getHeaders(),
     body: JSON.stringify(payload),
   });
-  const data = await handleResponse<any>(res);
+  const data = await handleResponse<Record<string, any>>(res);
   return mapProject(data);
 }
 
@@ -203,7 +206,7 @@ export async function adminFetchUsers(): Promise<User[]> {
   const res = await fetch(`${API_BASE_URL}/admin/users`, {
     headers: getHeaders(),
   });
-  const data = await handleResponse<any[]>(res);
+  const data = await handleResponse<Record<string, any>[]>(res);
   return data.map(mapUser);
 }
 

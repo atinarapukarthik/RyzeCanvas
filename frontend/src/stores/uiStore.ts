@@ -1,27 +1,21 @@
 import { create } from "zustand";
 
 interface UIState {
-  theme: "dark" | "light";
   sidebarOpen: boolean;
-  toggleTheme: () => void;
-  setTheme: (t: "dark" | "light") => void;
-  setSidebarOpen: (open: boolean) => void;
+  githubConnected: boolean;
   toggleSidebar: () => void;
+  setSidebarOpen: (open: boolean) => void;
+  setGithubConnected: (connected: boolean) => void;
+  theme: string;
+  toggleTheme: () => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
-  theme: "dark",
   sidebarOpen: true,
-  toggleTheme: () =>
-    set((s) => {
-      const next = s.theme === "dark" ? "light" : "dark";
-      document.documentElement.classList.toggle("dark", next === "dark");
-      return { theme: next };
-    }),
-  setTheme: (t) => {
-    document.documentElement.classList.toggle("dark", t === "dark");
-    set({ theme: t });
-  },
-  setSidebarOpen: (open) => set({ sidebarOpen: open }),
+  githubConnected: false,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+  setSidebarOpen: (open) => set({ sidebarOpen: open }),
+  setGithubConnected: (connected) => set({ githubConnected: connected }),
+  theme: "dark",
+  toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
 }));

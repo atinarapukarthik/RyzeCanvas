@@ -87,3 +87,8 @@ pnpm-debug.log*
 # frontend/pnpm-lock.yaml
 # frontend/bun.lockb
 backend/venv_test/
+
+# Claude Code
+.claude/
+AGENTS.md
+CLAUDE.md

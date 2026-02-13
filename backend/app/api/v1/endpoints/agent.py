@@ -3,7 +3,7 @@ AI Agent API endpoints for RyzeCanvas (Phase 4: LangGraph Orchestration).
 Provides endpoints for UI generation using RAG + State Graph with validation loop.
 """
 from typing import Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, Field
@@ -251,8 +251,8 @@ async def save_plan(
 
 @router.post("/generate-and-save", response_model=SavePlanResponse)
 async def generate_and_save(
-    prompt: str = Field(..., description="UI description"),
-    project_id: int = Field(..., description="Project ID to save to"),
+    prompt: str = Query(..., description="UI description"),
+    project_id: int = Query(..., description="Project ID to save to"),
     context: Optional[Dict[str, Any]] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)

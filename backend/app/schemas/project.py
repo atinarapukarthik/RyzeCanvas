@@ -19,6 +19,8 @@ class ProjectCreate(ProjectBase):
     """Schema for project creation."""
     code_json: Optional[str] = None  # JSON string
     is_public: bool = False
+    provider: Optional[str] = "gemini"
+    model: Optional[str] = "gemini-1.5-pro"
 
 
 # Properties to receive via API on update
@@ -37,6 +39,8 @@ class ProjectResponse(ProjectBase):
     user_id: int
     code_json: Optional[str] = None
     is_public: bool
+    provider: Optional[str] = None
+    model: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     

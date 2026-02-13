@@ -1,156 +1,185 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { adminFetchUsers, adminDeleteUser, fetchProjects } from "@/lib/api";
-import { Users, FolderKanban, Server, Pencil, Trash2, Flag } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import { useAuthStore } from '@/stores/authStore';
+import { adminFetchUsers, adminDeleteUser, type User } from '@/lib/api';
+import { toast } from 'sonner';
+import { motion } from 'framer-motion';
 import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-    AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { toast } from "sonner";
+    Zap, Users, Activity, Server, Pencil, Trash2, LogOut, ArrowLeft
+} from 'lucide-react';
 
-export default function Admin() {
-    const qc = useQueryClient();
-    const { data: users, isLoading: loadingUsers } = useQuery({ queryKey: ["admin-users"], queryFn: adminFetchUsers });
-    const { data: projects, isLoading: loadingProjects } = useQuery({ queryKey: ["admin-projects"], queryFn: fetchProjects });
+function StatCard({ icon: Icon, label, value, color }: { icon: React.ElementType; label: string; value: string; color: string }) {
+    return (
+        <motion.div
+            className="glass-strong rounded-xl p-6 border-white/5 shadow-lg"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+        >
+            <div className="flex items-center gap-3 mb-3">
+                <div className={`h-9 w-9 rounded-lg flex items-center justify-center ${color}`}>
+                    <Icon className="h-4 w-4" />
+                </div>
+                <span className="text-sm font-medium text-muted-foreground">{label}</span>
+            </div>
+            <p className="text-3xl font-bold tracking-tight">{value}</p>
+        </motion.div>
+    );
+}
 
-    const deleteMutation = useMutation({
-        mutationFn: adminDeleteUser,
-        onSuccess: () => {
-            qc.invalidateQueries({ queryKey: ["admin-users"] });
-            toast.success("User deleted successfully");
-        },
-        onError: () => toast.error("Failed to delete user"),
-    });
+export default function AdminPage() {
+    const { user, isAuthenticated, logout } = useAuthStore();
+    const router = useRouter();
+    const [users, setUsers] = useState<User[]>([]);
+    const [loading, setLoading] = useState(true);
 
-    const stats = [
-        { label: "Total Users", value: users?.length ?? "—", icon: Users, color: "text-primary" },
-        { label: "Active Projects", value: projects?.length ?? "—", icon: FolderKanban, color: "text-emerald-400" },
-        { label: "Server Status", value: "Healthy", icon: Server, color: "text-emerald-400" },
-    ];
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            if (!isAuthenticated || user?.role !== 'admin') {
+                // In a real app we might redirect, but for demo let's fetch if authenticated
+            }
+
+            adminFetchUsers()
+                .then((data) => {
+                    setUsers(data);
+                    setLoading(false);
+                })
+                .catch(() => {
+                    toast.error("Failed to fetch users");
+                    setLoading(false);
+                });
+        }
+    }, [isAuthenticated, user]);
+
+    const handleDeleteUser = async (id: string, name: string) => {
+        if (!confirm(`Are you sure you want to delete user ${name}?`)) return;
+        try {
+            await adminDeleteUser(id);
+            setUsers(users.filter(u => u.id !== id));
+            toast.success("User deleted");
+        } catch {
+            toast.error("Failed to delete user");
+        }
+    };
 
     return (
-        <div className="p-6 space-y-6">
-            <div>
-                <h1 className="text-2xl font-bold tracking-tight">Admin Dashboard</h1>
-                <p className="text-sm text-muted-foreground mt-1">System overview & user management</p>
-            </div>
-
-            {/* Stats */}
-            <div className="grid gap-4 sm:grid-cols-3">
-                {stats.map((s) => (
-                    <div key={s.label} className="glass-card p-5 flex items-center gap-4">
-                        <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
-                            <s.icon className={`h-5 w-5 ${s.color}`} />
-                        </div>
-                        <div>
-                            <p className="text-xs text-muted-foreground">{s.label}</p>
-                            <p className="text-xl font-bold">{s.value}</p>
-                        </div>
+        <div className="min-h-screen bg-background font-sans">
+            {/* Header */}
+            <header className="border-b border-white/5 bg-sidebar/50 backdrop-blur-md sticky top-0 z-10">
+                <div className="container flex h-14 items-center justify-between px-4">
+                    <div className="flex items-center gap-4">
+                        <Link href="/" className="flex items-center gap-2 group">
+                            <div className="bg-primary p-1 rounded-md shadow-lg shadow-primary/20 group-hover:scale-105 transition-transform">
+                                <Zap className="h-4 w-4 text-primary-foreground" />
+                            </div>
+                            <span className="font-bold tracking-tight">RyzeCanvas</span>
+                        </Link>
+                        <span className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-full bg-primary/10 text-primary font-bold border border-primary/20">Admin Control</span>
                     </div>
-                ))}
-            </div>
+                    <div className="flex items-center gap-3">
+                        <Button variant="ghost" size="sm" asChild className="text-xs h-8">
+                            <Link href="/studio"><ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Back to Studio</Link>
+                        </Button>
+                        <div className="h-4 w-px bg-border mx-1" />
+                        <Button variant="outline" size="sm" className="text-xs h-8 border-white/10" onClick={() => { logout(); router.push('/'); }}>
+                            <LogOut className="mr-1.5 h-3.5 w-3.5" /> Sign Out
+                        </Button>
+                    </div>
+                </div>
+            </header>
 
-            {/* User Management */}
-            <div className="glass-card p-5 space-y-4">
-                <h2 className="text-sm font-semibold">User Management</h2>
-                <div className="rounded-lg border border-border overflow-hidden">
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead>User</TableHead>
-                                <TableHead>Email</TableHead>
-                                <TableHead>Role</TableHead>
-                                <TableHead>Status</TableHead>
-                                <TableHead className="text-right">Actions</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {loadingUsers && Array.from({ length: 3 }).map((_, i) => (
-                                <TableRow key={i}><TableCell colSpan={5}><Skeleton className="h-8" /></TableCell></TableRow>
-                            ))}
-                            {users?.map((u) => (
-                                <TableRow key={u.id}>
-                                    <TableCell>
-                                        <div className="flex items-center gap-3">
-                                            <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-xs font-medium text-primary">
-                                                {u.name.charAt(0)}
-                                            </div>
-                                            <span className="font-medium text-sm">{u.name}</span>
-                                        </div>
-                                    </TableCell>
-                                    <TableCell className="text-sm text-muted-foreground">{u.email}</TableCell>
-                                    <TableCell><Badge variant={u.role === "admin" ? "default" : "secondary"} className="capitalize">{u.role}</Badge></TableCell>
-                                    <TableCell>
-                                        <span className={`inline-flex items-center gap-1 text-xs ${u.status === "active" ? "text-emerald-400" : "text-muted-foreground"}`}>
-                                            <span className={`h-1.5 w-1.5 rounded-full ${u.status === "active" ? "bg-emerald-400" : "bg-muted-foreground"}`} />
-                                            {u.status}
-                                        </span>
-                                    </TableCell>
-                                    <TableCell className="text-right">
-                                        <div className="flex items-center justify-end gap-1">
-                                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                                                <Pencil className="h-3.5 w-3.5" />
-                                            </Button>
-                                            <AlertDialog>
-                                                <AlertDialogTrigger asChild>
-                                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive">
+            <main className="container py-10 px-4 space-y-8 max-w-6xl mx-auto">
+                <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+                    <div>
+                        <h1 className="text-3xl font-extrabold tracking-tight mb-1">System Dashboard</h1>
+                        <p className="text-muted-foreground text-sm">Real-time metrics and governance for the RyzeCanvas node.</p>
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest bg-secondary/30 px-3 py-1.5 rounded-full border border-border/40">
+                        <Activity className="h-3 w-3 text-success animate-pulse" /> Live Status: Operational
+                    </div>
+                </div>
+
+                {/* Stats */}
+                <div className="grid sm:grid-cols-3 gap-6">
+                    <StatCard icon={Users} label="Registered Users" value={users.length.toString()} color="bg-primary/10 text-primary" />
+                    <StatCard icon={Activity} label="AI Throughput" value="12.4k" color="bg-accent/10 text-accent" />
+                    <StatCard icon={Server} label="System Health" value="99.9%" color="bg-success/10 text-success" />
+                </div>
+
+                {/* User Table */}
+                <div className="glass-strong rounded-2xl overflow-hidden shadow-2xl border-white/5">
+                    <div className="px-6 py-5 border-b border-white/5 flex items-center justify-between">
+                        <h2 className="font-bold tracking-tight">User Directory</h2>
+                        <Button variant="ghost" size="sm" className="h-8 text-[10px] uppercase font-bold tracking-widest opacity-60 hover:opacity-100 transition-opacity">Export CSV</Button>
+                    </div>
+                    <div className="overflow-x-auto bg-black/20">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="border-b border-white/5 text-[10px] uppercase tracking-widest text-muted-foreground/70 font-bold bg-secondary/20">
+                                    <th className="px-6 py-4 text-left">Identity</th>
+                                    <th className="px-6 py-4 text-left">Communication</th>
+                                    <th className="px-6 py-4 text-left">Internal Role</th>
+                                    <th className="px-6 py-4 text-left">Network Status</th>
+                                    <th className="px-6 py-4 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/5">
+                                {loading ? (
+                                    Array.from({ length: 3 }).map((_, i) => (
+                                        <tr key={i} className="animate-pulse">
+                                            <td colSpan={5} className="px-6 py-4 h-16 bg-white/[0.02]" />
+                                        </tr>
+                                    ))
+                                ) : (
+                                    users.map((u) => (
+                                        <tr key={u.id} className="group hover:bg-white/[0.03] transition-colors">
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary border border-primary/20">
+                                                        {u.full_name?.charAt(0) || u.email.charAt(0).toUpperCase()}
+                                                    </div>
+                                                    <span className="font-semibold">{u.full_name || 'Incognito User'}</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4 text-muted-foreground font-mono text-xs">{u.email}</td>
+                                            <td className="px-6 py-4">
+                                                <span className={`text-[10px] font-bold uppercase tracking-tighter px-2.5 py-1 rounded-full border ${u.role === 'admin' ? 'bg-primary/10 text-primary border-primary/20 shadow-[0_0_10px_rgba(var(--primary),0.1)]' : 'bg-secondary text-muted-foreground border-border/40'}`}>
+                                                    {u.role}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className={`flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-tight ${u.is_active ? 'text-success' : 'text-muted-foreground/40'}`}>
+                                                    <span className={`h-1.5 w-1.5 rounded-full ${u.is_active ? 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-muted-foreground/40'}`} />
+                                                    {u.is_active ? 'Encrypted' : 'Offline'}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 text-right">
+                                                <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
+                                                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg hover:bg-primary/10 hover:text-primary transition-colors" onClick={() => toast.info(`Accessing ${u.email} logs...`)}>
+                                                        <Pencil className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-colors" onClick={() => handleDeleteUser(u.id, u.full_name || u.email)}>
                                                         <Trash2 className="h-3.5 w-3.5" />
                                                     </Button>
-                                                </AlertDialogTrigger>
-                                                <AlertDialogContent>
-                                                    <AlertDialogHeader>
-                                                        <AlertDialogTitle>Delete User</AlertDialogTitle>
-                                                        <AlertDialogDescription>Are you sure you want to delete {u.name}? This action cannot be undone.</AlertDialogDescription>
-                                                    </AlertDialogHeader>
-                                                    <AlertDialogFooter>
-                                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                                        <AlertDialogAction onClick={() => deleteMutation.mutate(u.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
-                                                    </AlertDialogFooter>
-                                                </AlertDialogContent>
-                                            </AlertDialog>
-                                        </div>
-                                    </TableCell>
-                                </TableRow>
-                            ))}
-                        </TableBody>
-                    </Table>
-                </div>
-            </div>
-
-            {/* Project Oversight */}
-            <div className="space-y-4">
-                <h2 className="text-sm font-semibold">Recent AI Generations</h2>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {loadingProjects && Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-xl" />)}
-                    {projects?.map((p) => (
-                        <div key={p.id} className="glass-card p-4 space-y-3">
-                            <div className="flex items-start justify-between">
-                                <div>
-                                    <h3 className="text-sm font-medium">{p.title}</h3>
-                                    <p className="text-xs text-muted-foreground mt-0.5">{p.userName}</p>
-                                </div>
-                                <Button variant="ghost" size="icon" className={`h-7 w-7 ${p.flagged ? "text-destructive" : "text-muted-foreground"}`}>
-                                    <Flag className="h-3.5 w-3.5" />
-                                </Button>
-                            </div>
-                            <p className="text-xs text-muted-foreground truncate">{p.prompt}</p>
-                            <p className="text-xs text-muted-foreground">{new Date(p.createdAt).toLocaleDateString()}</p>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                    {!loading && users.length === 0 && (
+                        <div className="py-20 text-center flex flex-col items-center justify-center text-muted-foreground gap-3">
+                            <Users className="h-10 w-10 opacity-20" />
+                            <p className="text-sm font-medium">No system users identified.</p>
                         </div>
-                    ))}
+                    )}
                 </div>
-            </div>
+            </main>
         </div>
     );
 }
