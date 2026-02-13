@@ -261,6 +261,44 @@ COMPONENT_TEMPLATES = {
             "options": ["Option 1", "Option 2", "Option 3"],
             "onChange": "handleSelectChange"
         }
+    },
+    "Image": {
+        "required_props": ["src", "alt"],
+        "optional_props": ["width", "height", "rounded", "objectFit"],
+        "example": {
+            "src": "/placeholder.png",
+            "alt": "Description",
+            "width": 100,
+            "height": 100,
+            "rounded": True
+        }
+    },
+    "Container": {
+        "required_props": [],
+        "optional_props": ["layout", "direction", "gap", "padding", "background", "children"],
+        "example": {
+            "layout": "flex",
+            "direction": "row",
+            "gap": 10,
+            "padding": "20px"
+        }
+    },
+    "Checkbox": {
+        "required_props": ["label"],
+        "optional_props": ["checked", "onChange", "disabled"],
+        "example": {
+            "label": "Agree to terms",
+            "checked": False
+        }
+    },
+    "Radio": {
+        "required_props": ["name", "options"],
+        "optional_props": ["label", "value", "onChange"],
+        "example": {
+            "name": "gender",
+            "label": "Gender",
+            "options": ["Male", "Female", "Other"]
+        }
     }
 }
 

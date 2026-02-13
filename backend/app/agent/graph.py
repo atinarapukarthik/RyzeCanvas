@@ -13,7 +13,8 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.agent.rag import retrieve_context
-from app.core.component_library import ALLOWED_COMPONENTS, validate_component_type
+from app.core.component_library import ALLOWED_COMPONENTS
+from app.agent.validator import validate_dhdc
 
 
 # Define the Agent State
@@ -221,76 +222,35 @@ Output ONLY the JSON. No markdown code blocks, no extra text.
 # Node 4: Validate JSON (Guardrail - NOT LLM)
 def validate_node(state: AgentState) -> AgentState:
     """
-    Node 4: Strict Python validation of the generated JSON.
+    Node 4: Strict Python validation of the generated JSON using D-HDC.
     
     Checks:
-    1. All component types are in ALLOWED_COMPONENTS
-    2. Required fields are present (id, type, props, position)
-    3. Position has x and y coordinates
+    1. Structure Validation (Layer 1)
+    2. Semantic Validation (Layer 2 - Component Types)
+    3. Property Validation (Layer 3 - Component Props)
     
     If invalid, adds errors to state for retry.
     """
-    print("🛡️ [VALIDATE NODE] Validating generated JSON...")
+    print("🛡️ [VALIDATE NODE] Validating generated JSON with D-HDC...")
     
     code_json = state["code_json"]
-    errors = []
     
-    # Check if components key exists
-    if "components" not in code_json:
-        errors.append("Missing 'components' key in JSON")
-        return {
-            **state,
-            "errors": state.get("errors", []) + errors
-        }
+    # Run D-HDC Validator
+    is_valid, error = validate_dhdc(code_json)
     
-    components = code_json["components"]
-    
-    # Validate each component
-    for i, component in enumerate(components):
-        component_id = component.get("id", f"component_{i}")
-        
-        # Check required fields
-        if "type" not in component:
-            errors.append(f"Component '{component_id}': Missing 'type' field")
-            continue
-        
-        component_type = component["type"]
-        
-        # STRICT: Check if type is in allowed list
-        if not validate_component_type(component_type):
-            errors.append(
-                f"Component '{component_id}': Invalid type '{component_type}'. "
-                f"Allowed types: {', '.join(ALLOWED_COMPONENTS)}"
-            )
-        
-        # Check for required fields
-        if "props" not in component:
-            errors.append(f"Component '{component_id}': Missing 'props' field")
-        
-        if "position" not in component:
-            errors.append(f"Component '{component_id}': Missing 'position' field")
-        else:
-            position = component["position"]
-            if "x" not in position or "y" not in position:
-                errors.append(f"Component '{component_id}': Position must have 'x' and 'y'")
-    
-    # Check layout
-    if "layout" not in code_json:
-        errors.append("Missing 'layout' key in JSON")
-    
-    if errors:
-        print(f"❌ Validation failed with {len(errors)} errors")
-        for error in errors:
-            print(f"   - {error}")
-        return {
-            **state,
-            "errors": state.get("errors", []) + errors
-        }
-    else:
-        print("✅ Validation passed!")
+    if is_valid:
+        print("✅ D-HDC Validation passed!")
         return {
             **state,
             "final_output": code_json
+        }
+    else:
+        print(f"❌ D-HDC Validation failed:\n{error}")
+        # Add error to state
+        # We wrap in a list because 'errors' in state is Annotated[List[str], add]
+        return {
+            **state,
+            "errors": state.get("errors", []) + [error]
         }
 
 
