@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:5173"
     BACKEND_CORS_ORIGINS: List[str] = []
     
+    # AI Configuration
+    AI_MODEL_PROVIDER: str = "openai"
+    OPENAI_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
+    
     @validator("BACKEND_CORS_ORIGINS", pre=True)
     def assemble_cors_origins(cls, v, values):
         """
@@ -56,9 +61,11 @@ class Settings(BaseSettings):
             
         return list(set(origins))  # Remove duplicates
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = {
+        "env_file": ".env",
+        "case_sensitive": True,
+        "extra": "ignore"
+    }
 
 
 # Global settings instance

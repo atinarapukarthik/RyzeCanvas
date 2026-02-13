@@ -62,6 +62,9 @@ jobs:
           SECRET_KEY: test-integration-secret-key
           ALGORITHM: HS256
           ACCESS_TOKEN_EXPIRE_MINUTES: 30
+          AI_MODEL_PROVIDER: openai
+          OPENAI_API_KEY: sk-test-key
+
         run: |
           python -m app.main &
           sleep 10
@@ -108,7 +111,10 @@ jobs:
               environment:
                 - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/ryzecanvas
                 - SECRET_KEY=test-secret-key
+                - AI_MODEL_PROVIDER=openai
+                - OPENAI_API_KEY=sk-test-key
               depends_on:
+
                 - db
             
             db:
