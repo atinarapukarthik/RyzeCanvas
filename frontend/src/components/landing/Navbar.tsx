@@ -26,23 +26,23 @@ export function Navbar() {
             initial={{ y: -20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-            className="fixed top-0 left-0 right-0 z-50"
+            className="fixed top-0 left-0 right-0 z-50 p-4"
         >
-            <div className="mx-auto max-w-6xl px-4 pt-4">
+            <div className="mx-auto max-w-6xl">
                 <nav
                     className={`relative flex items-center justify-between rounded-2xl border px-5 py-3 transition-all duration-500 ${scrolled
-                        ? "border-border bg-background/80 backdrop-blur-2xl shadow-sm"
-                        : "border-transparent bg-transparent"
+                        ? "border-white/10 bg-black/40 backdrop-blur-2xl shadow-[0_0_30px_-10px_rgba(0,0,0,0.5)]"
+                        : "border-white/5 bg-white/5 backdrop-blur-md"
                         }`}
                 >
                     {/* Logo */}
                     <Link href="/" className="flex items-center gap-2.5 group">
-                        <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-accent">
-                            <Sparkles className="h-4 w-4 text-white" />
-                            <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-primary to-accent opacity-0 blur-lg transition-opacity duration-500 group-hover:opacity-60" />
+                        <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-[hsl(234,89%,74%)] to-[hsl(280,72%,68%)]">
+                            <Sparkles className="h-4 w-4 text-black" />
+                            <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-[hsl(234,89%,74%)] to-[hsl(280,72%,68%)] opacity-0 blur-lg transition-opacity duration-500 group-hover:opacity-60" />
                         </div>
-                        <span className="font-display text-lg font-bold tracking-tight text-foreground">
-                            Ryze<span className="text-primary">Canvas</span>
+                        <span className="font-display text-lg font-bold tracking-tight text-white">
+                            Ryze<span className="text-[hsl(234,89%,74%)]">Canvas</span>
                         </span>
                     </Link>
 
@@ -52,7 +52,7 @@ export function Navbar() {
                             <Link
                                 key={link.label}
                                 href={link.href}
-                                className="relative px-4 py-2 text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground rounded-xl hover:bg-accent/50"
+                                className="relative px-4 py-2 text-sm text-white/50 transition-all duration-200 hover:text-white rounded-xl hover:bg-white/5"
                             >
                                 {link.label}
                             </Link>
@@ -63,13 +63,13 @@ export function Navbar() {
                     <div className="hidden md:flex items-center gap-3">
                         <Link
                             href="/login"
-                            className="px-4 py-2 text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground"
+                            className="px-4 py-2 text-sm text-white/50 transition-colors duration-200 hover:text-white"
                         >
                             Sign in
                         </Link>
                         <Link
                             href="/register"
-                            className="group relative inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-medium text-white transition-all duration-300 hover:shadow-[0_0_24px_-4px_hsl(var(--primary)/0.5)]"
+                            className="group relative inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[hsl(234,89%,74%)] to-[hsl(280,72%,68%)] px-5 py-2.5 text-sm font-semibold text-black transition-all duration-300 hover:brightness-110 hover:shadow-[0_0_20px_rgba(147,152,255,0.3)]"
                         >
                             Get Started
                             <svg
@@ -87,7 +87,7 @@ export function Navbar() {
                     {/* Mobile menu toggle */}
                     <button
                         onClick={() => setMobileOpen(!mobileOpen)}
-                        className="md:hidden flex h-9 w-9 items-center justify-center rounded-xl text-foreground/70 transition-colors hover:bg-accent/50"
+                        className="md:hidden flex h-9 w-9 items-center justify-center rounded-xl text-white/70 transition-colors hover:bg-white/10"
                         aria-label="Toggle menu"
                     >
                         {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -102,7 +102,7 @@ export function Navbar() {
                             animate={{ opacity: 1, height: "auto" }}
                             exit={{ opacity: 0, height: 0 }}
                             transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-                            className="mt-2 overflow-hidden rounded-2xl border border-border bg-background/80 backdrop-blur-2xl md:hidden"
+                            className="mt-2 overflow-hidden rounded-2xl border border-white/10 bg-black/60 backdrop-blur-2xl md:hidden"
                         >
                             <div className="flex flex-col gap-1 p-3">
                                 {navLinks.map((link, i) => (
@@ -115,24 +115,24 @@ export function Navbar() {
                                         <Link
                                             href={link.href}
                                             onClick={() => setMobileOpen(false)}
-                                            className="block rounded-xl px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+                                            className="block rounded-xl px-4 py-3 text-sm text-white/60 transition-colors hover:bg-white/10 hover:text-white"
                                         >
                                             {link.label}
                                         </Link>
                                     </motion.div>
                                 ))}
-                                <div className="mt-2 border-t border-border pt-3 flex flex-col gap-2">
+                                <div className="mt-2 border-t border-white/10 pt-3 flex flex-col gap-2">
                                     <Link
                                         href="/login"
                                         onClick={() => setMobileOpen(false)}
-                                        className="block rounded-xl px-4 py-3 text-center text-sm text-muted-foreground transition-colors hover:text-foreground"
+                                        className="block rounded-xl px-4 py-3 text-center text-sm text-white/60 transition-colors hover:text-white"
                                     >
                                         Sign in
                                     </Link>
                                     <Link
                                         href="/register"
                                         onClick={() => setMobileOpen(false)}
-                                        className="block rounded-xl bg-primary px-4 py-3 text-center text-sm font-medium text-white"
+                                        className="block rounded-xl bg-gradient-to-r from-[hsl(234,89%,74%)] to-[hsl(280,72%,68%)] px-4 py-3 text-center text-sm font-semibold text-black"
                                     >
                                         Get Started
                                     </Link>

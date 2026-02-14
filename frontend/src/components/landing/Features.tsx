@@ -17,17 +17,17 @@ const features = [
         title: "Deterministic AI",
         description:
             "Predictable, testable, production-grade output. No hallucinations, no guesswork — just reliable code you can ship.",
-        gradient: "from-blue-500/20 to-cyan-500/20",
-        iconColor: "text-blue-400",
+        gradient: "from-[hsl(234,89%,74%)]/10 to-transparent",
+        iconColor: "text-[hsl(234,89%,74%)]",
         span: "md:col-span-2",
     },
     {
         icon: Code2,
         title: "Component-First",
         description:
-            "Built on battle-tested design systems. Every component is accessible, composable, and cohesive out of the box.",
-        gradient: "from-violet-500/20 to-purple-500/20",
-        iconColor: "text-violet-400",
+            "Built on battle-tested design systems. Every component is accessible, composable, and cohesive.",
+        gradient: "from-[hsl(280,72%,68%)]/10 to-transparent",
+        iconColor: "text-[hsl(280,72%,68%)]",
         span: "",
     },
     {
@@ -35,7 +35,7 @@ const features = [
         title: "Real-time Generation",
         description:
             "Watch your code materialise as you describe it. Instant visual feedback with hot-reload previews.",
-        gradient: "from-amber-500/20 to-orange-500/20",
+        gradient: "from-amber-400/10 to-transparent",
         iconColor: "text-amber-400",
         span: "",
     },
@@ -43,8 +43,8 @@ const features = [
         icon: Layers,
         title: "Smart RAG Retrieval",
         description:
-            "Powered by FAISS vector search. RyzeCanvas learns from 500+ production component patterns to generate contextually perfect code every time.",
-        gradient: "from-emerald-500/20 to-teal-500/20",
+            "Powered by advanced vector search. RyzeCanvas learns from 500+ production patterns to generate contextually perfect code.",
+        gradient: "from-emerald-400/10 to-transparent",
         iconColor: "text-emerald-400",
         span: "md:col-span-2",
     },
@@ -53,8 +53,8 @@ const features = [
         title: "GitHub Integration",
         description:
             "Commit and push directly to your repositories. Branches, PRs, and CI/CD pipelines built right in.",
-        gradient: "from-orange-500/20 to-red-500/20",
-        iconColor: "text-orange-400",
+        gradient: "from-blue-400/10 to-transparent",
+        iconColor: "text-blue-400",
         span: "",
     },
     {
@@ -62,8 +62,8 @@ const features = [
         title: "One-Click Deploy",
         description:
             "Deploy to Vercel, Netlify, or your own infra with a single click. Zero config needed.",
-        gradient: "from-pink-500/20 to-rose-500/20",
-        iconColor: "text-pink-400",
+        gradient: "from-rose-400/10 to-transparent",
+        iconColor: "text-rose-400",
         span: "",
     },
 ];
@@ -108,14 +108,14 @@ function BentoCard({
                 onMouseMove={handleMouseMove}
                 onMouseEnter={() => setIsHovered(true)}
                 onMouseLeave={() => setIsHovered(false)}
-                className="relative h-full overflow-hidden rounded-2xl border border-border/50 bg-card/30 backdrop-blur-sm p-7 md:p-8 transition-all duration-500 hover:border-border hover:bg-card/50"
+                className="relative h-full overflow-hidden rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-md p-7 md:p-8 transition-all duration-500 hover:border-white/10 hover:bg-white/[0.04] shadow-2xl"
             >
                 {/* Spotlight – radial gradient follows the cursor */}
                 <div
                     className="absolute inset-0 transition-opacity duration-300 pointer-events-none"
                     style={{
                         opacity: isHovered ? 1 : 0,
-                        background: `radial-gradient(600px circle at ${mousePos.x}px ${mousePos.y}px, hsl(var(--primary) / 0.06), transparent 40%)`,
+                        background: `radial-gradient(600px circle at ${mousePos.x}px ${mousePos.y}px, rgba(255,255,255,0.06), transparent 40%)`,
                     }}
                 />
 
@@ -129,7 +129,7 @@ function BentoCard({
                     className="absolute inset-0 transition-opacity duration-300 pointer-events-none rounded-2xl"
                     style={{
                         opacity: isHovered ? 1 : 0,
-                        background: `radial-gradient(400px circle at ${mousePos.x}px ${mousePos.y}px, hsl(var(--primary) / 0.08), transparent 40%)`,
+                        background: `radial-gradient(400px circle at ${mousePos.x}px ${mousePos.y}px, rgba(255,255,255,0.1), transparent 40%)`,
                         mask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
                         maskComposite: "exclude",
                         WebkitMaskComposite: "xor",
@@ -139,7 +139,7 @@ function BentoCard({
 
                 {/* Icon */}
                 <div className="relative mb-5">
-                    <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-accent/20 border border-border/50 group-hover:border-border transition-colors duration-300">
+                    <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 border border-white/5 group-hover:border-white/10 transition-colors duration-300">
                         <feature.icon
                             className={`h-5 w-5 ${feature.iconColor} transition-transform duration-500 group-hover:scale-110`}
                         />
@@ -147,16 +147,16 @@ function BentoCard({
                 </div>
 
                 {/* Content */}
-                <h3 className="relative font-display text-lg font-semibold text-foreground mb-2 tracking-tight">
+                <h3 className="relative font-display text-lg font-semibold text-white mb-2 tracking-tight">
                     {feature.title}
                 </h3>
-                <p className="relative text-sm text-foreground/40 leading-relaxed group-hover:text-foreground/55 transition-colors duration-300">
+                <p className="relative text-sm text-white/40 leading-relaxed group-hover:text-white/60 transition-colors duration-300">
                     {feature.description}
                 </p>
 
                 {/* Bottom line */}
                 <motion.div
-                    className="relative mt-6 h-px bg-gradient-to-r from-transparent via-border to-transparent"
+                    className="relative mt-6 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
                     initial={{ scaleX: 0 }}
                     whileInView={{ scaleX: 1 }}
                     viewport={{ once: true }}
@@ -172,11 +172,14 @@ function BentoCard({
 /* ------------------------------------------------------------------ */
 export function Features() {
     return (
-        <section id="features" className="relative py-32 overflow-hidden">
+        <section id="features" className="relative py-32 overflow-hidden bg-black">
+            {/* Background grid */}
+            <div className="absolute inset-0 bg-grid-white pointer-events-none opacity-20" />
+
             {/* Ambient glow */}
             <div className="absolute inset-0 pointer-events-none">
                 <motion.div
-                    className="absolute top-1/4 left-1/3 w-[500px] h-[500px] rounded-full opacity-[0.04]"
+                    className="absolute top-1/4 left-1/3 w-[500px] h-[500px] rounded-full opacity-[0.05]"
                     style={{
                         background:
                             "radial-gradient(circle, hsl(var(--primary)), transparent 70%)",
@@ -184,7 +187,7 @@ export function Features() {
                     }}
                     animate={{
                         scale: [1, 1.1, 1],
-                        opacity: [0.04, 0.07, 0.04],
+                        opacity: [0.05, 0.08, 0.05],
                     }}
                     transition={{
                         repeat: Infinity,
@@ -204,21 +207,21 @@ export function Features() {
                     transition={{ duration: 0.5 }}
                 >
                     <motion.div
-                        className="inline-flex items-center gap-2 rounded-full border border-border bg-accent/30 px-4 py-1.5 text-xs font-medium text-foreground/50 mb-6"
+                        className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs font-medium text-white/50 mb-6 backdrop-blur-md"
                         initial={{ opacity: 0, y: 8 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
                         transition={{ delay: 0.05 }}
                     >
-                        <Zap className="h-3.5 w-3.5 text-primary" />
+                        <Zap className="h-3.5 w-3.5 text-[hsl(234,89%,74%)]" />
                         Features
                     </motion.div>
 
-                    <h2 className="font-display text-4xl sm:text-5xl font-bold tracking-tight text-foreground mb-5">
+                    <h2 className="font-display text-4xl sm:text-5xl font-bold tracking-tight text-white mb-5">
                         Everything you need to{" "}
-                        <span className="bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent">ship faster</span>
+                        <span className="bg-clip-text text-transparent bg-gradient-to-r from-[hsl(234,89%,74%)] to-[hsl(280,72%,68%)]">ship faster</span>
                     </h2>
-                    <p className="text-foreground/40 max-w-xl mx-auto text-lg leading-relaxed">
+                    <p className="text-white/40 max-w-xl mx-auto text-lg leading-relaxed">
                         A complete AI-powered toolkit for generating, previewing,
                         and deploying production-grade code.
                     </p>

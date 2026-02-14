@@ -568,3 +568,23 @@ export async function adminDeleteUser(id: string): Promise<{ success: boolean }>
   if (res.ok) return { success: true };
   return { success: false };
 }
+
+export async function adminCreateUser(data: any): Promise<User> {
+  const res = await fetch(`${API_BASE_URL}/admin/users`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(data),
+  });
+  const userData = await handleResponse<Record<string, any>>(res);
+  return mapUser(userData);
+}
+
+export async function adminUpdateUser(id: string, data: any): Promise<User> {
+  const res = await fetch(`${API_BASE_URL}/admin/users/${id}`, {
+    method: "PUT",
+    headers: getHeaders(),
+    body: JSON.stringify(data),
+  });
+  const userData = await handleResponse<Record<string, any>>(res);
+  return mapUser(userData);
+}

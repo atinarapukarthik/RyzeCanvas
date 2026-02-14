@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 // Routes that require authentication
-const protectedRoutes = ["/studio", "/history", "/settings", "/admin"];
+const protectedRoutes = ["/dashboard", "/studio", "/history", "/settings", "/admin"];
 
 // Routes that should redirect to /studio if already authenticated
 const authRoutes = ["/login", "/register"];
 
-export function middleware(request: NextRequest) {
+export default function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Check for auth cookie (HTTP-only cookies are accessible in middleware)
@@ -23,10 +23,10 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // If authenticated and visiting auth pages, redirect to studio
+  // If authenticated and visiting auth pages, redirect to dashboard (or studio)
   const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route));
   if (isAuthRoute && hasAuth) {
-    return NextResponse.redirect(new URL("/studio", request.url));
+    return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
   return NextResponse.next();
@@ -35,6 +35,7 @@ export function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     // Match all protected and auth routes
+    "/dashboard/:path*",
     "/studio/:path*",
     "/history/:path*",
     "/settings/:path*",

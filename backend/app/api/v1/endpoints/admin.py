@@ -12,8 +12,9 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_db, get_current_admin
 from app.models.user import User
 from app.models.project import Project
-from app.schemas.user import UserResponse
+from app.schemas.user import UserResponse, UserCreate, UserUpdate
 from app.schemas.project import ProjectResponse
+from app.core.security import get_password_hash
 
 
 router = APIRouter()
@@ -43,6 +44,67 @@ async def list_all_users(
     users = result.scalars().all()
     
     return users
+
+
+@router.post("/users", response_model=UserResponse)
+async def admin_create_user(
+    user_in: UserCreate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """
+    Create a new user (Admin only).
+    """
+    # Check if user already exists
+    result = await db.execute(select(User).where(User.email == user_in.email))
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User with this email already exists"
+        )
+    
+    new_user = User(
+        email=user_in.email,
+        hashed_password=get_password_hash(user_in.password),
+        full_name=user_in.full_name,
+        role=user_in.role,
+        is_active=True
+    )
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+    return new_user
+
+
+@router.put("/users/{user_id}", response_model=UserResponse)
+async def admin_update_user(
+    user_id: int,
+    user_in: UserUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """
+    Update a user's details (Admin only).
+    """
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    update_data = user_in.dict(exclude_unset=True)
+    if "password" in update_data:
+        update_data["hashed_password"] = get_password_hash(update_data.pop("password"))
+        
+    for field, value in update_data.items():
+        setattr(user, field, value)
+        
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

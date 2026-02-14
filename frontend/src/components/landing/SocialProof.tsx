@@ -16,7 +16,7 @@ const logos = [
 /* Simple SVG-text logos to avoid external images */
 function LogoMark({ name }: { name: string }) {
     return (
-        <span className="text-[15px] font-display font-semibold tracking-wide text-foreground/25 transition-colors duration-500 group-hover:text-foreground/45 select-none whitespace-nowrap">
+        <span className="text-[15px] font-display font-semibold tracking-wide text-white/20 transition-colors duration-500 group-hover:text-white/50 select-none whitespace-nowrap">
             {name}
         </span>
     );
@@ -26,15 +26,15 @@ export function SocialProof() {
     const doubled = [...logos, ...logos];
 
     return (
-        <section className="relative py-20 overflow-hidden">
+        <section className="relative py-24 overflow-hidden bg-black">
             {/* Top divider line */}
             <div className="absolute inset-x-0 top-0">
-                <div className="mx-auto max-w-5xl h-px bg-gradient-to-r from-transparent via-foreground/[0.06] to-transparent" />
+                <div className="mx-auto max-w-5xl h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
             </div>
 
             {/* Label */}
             <motion.p
-                className="text-center text-[11px] uppercase tracking-[0.25em] text-foreground/30 font-medium mb-10"
+                className="text-center text-[11px] uppercase tracking-[0.25em] text-white/30 font-medium mb-12"
                 initial={{ opacity: 0 }}
                 whileInView={{ opacity: 1 }}
                 viewport={{ once: true }}
@@ -87,10 +87,10 @@ export function SocialProof() {
                         viewport={{ once: true }}
                         transition={{ delay: 0.3 + i * 0.07 }}
                     >
-                        <div className="font-display text-3xl md:text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent mb-1">
+                        <div className="font-display text-3xl md:text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-[hsl(234,89%,74%)] to-[hsl(280,72%,68%)] mb-1">
                             {stat.value}
                         </div>
-                        <div className="text-xs text-foreground/35 font-medium uppercase tracking-wider">
+                        <div className="text-[10px] text-white/30 font-semibold uppercase tracking-wider">
                             {stat.label}
                         </div>
                     </motion.div>
@@ -99,7 +99,7 @@ export function SocialProof() {
 
             {/* Bottom divider */}
             <div className="absolute inset-x-0 bottom-0">
-                <div className="mx-auto max-w-5xl h-px bg-gradient-to-r from-transparent via-foreground/[0.06] to-transparent" />
+                <div className="mx-auto max-w-5xl h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
             </div>
         </section>
     );
