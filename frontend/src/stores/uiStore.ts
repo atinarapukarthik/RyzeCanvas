@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import { AIModel } from "@/components/ProviderSelector";
 
 interface UIState {
@@ -15,16 +16,27 @@ interface UIState {
   setGithubModal: (open: boolean) => void;
 }
 
-export const useUIStore = create<UIState>((set) => ({
-  sidebarOpen: true,
-  githubConnected: false,
-  toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
-  setSidebarOpen: (open) => set({ sidebarOpen: open }),
-  setGithubConnected: (connected) => set({ githubConnected: connected }),
-  theme: "dark",
-  toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
-  selectedModel: { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "gemini" },
-  setSelectedModel: (model) => set({ selectedModel: model }),
-  githubModal: false,
-  setGithubModal: (open) => set({ githubModal: open }),
-}));
+export const useUIStore = create<UIState>()(
+  persist(
+    (set) => ({
+      sidebarOpen: true,
+      githubConnected: false,
+      toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+      setSidebarOpen: (open) => set({ sidebarOpen: open }),
+      setGithubConnected: (connected) => set({ githubConnected: connected }),
+      theme: "dark",
+      toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
+      selectedModel: { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "gemini" },
+      setSelectedModel: (model) => set({ selectedModel: model }),
+      githubModal: false,
+      setGithubModal: (open) => set({ githubModal: open }),
+    }),
+    {
+      name: "ui-storage",
+      partialize: (state) => ({
+        selectedModel: state.selectedModel,
+        theme: state.theme,
+      }),
+    }
+  )
+);

@@ -5,6 +5,9 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
+import { useUIStore } from "@/stores/uiStore";
+import { fetchAvailableModels } from "@/lib/api";
+import type { AIModel, AIProvider } from "@/components/ProviderSelector";
 
 // --- Radix Primitives ---
 const TooltipProvider = TooltipPrimitive.Provider;
@@ -140,13 +143,26 @@ const MessageSquareIcon = (props: React.SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
-const PencilIcon = (props: React.SVGProps<SVGSVGElement>) => null;
+const ChevronDownIcon = (props: React.SVGProps<SVGSVGElement>) => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="m6 9 6 6 6-6" />
+  </svg>
+);
 
-const PaintBrushIcon = (props: React.SVGProps<SVGSVGElement>) => null;
+const CpuIcon = (props: React.SVGProps<SVGSVGElement>) => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <rect x="4" y="4" width="16" height="16" rx="2" />
+    <rect x="9" y="9" width="6" height="6" />
+    <path d="M15 2v2" /><path d="M15 20v2" /><path d="M2 15h2" /><path d="M2 9h2" />
+    <path d="M20 15h2" /><path d="M20 9h2" /><path d="M9 2v2" /><path d="M9 20v2" />
+  </svg>
+);
 
-const TelescopeIcon = (props: React.SVGProps<SVGSVGElement>) => null;
-
-const LightbulbIcon = (props: React.SVGProps<SVGSVGElement>) => null;
+const CheckIcon = (props: React.SVGProps<SVGSVGElement>) => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M20 6 9 17l-5-5" />
+  </svg>
+);
 
 const MicIcon = (props: React.SVGProps<SVGSVGElement>) => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -160,27 +176,63 @@ const toolsList = [
   { id: "searchWeb", name: "Search in web", shortName: "Web", icon: GlobeIcon },
 ];
 
+// Fallback models if API fetch fails
+const PROMPTBOX_FALLBACK_MODELS: AIModel[] = [
+  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "gemini" },
+  { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "gemini" },
+  { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", provider: "claude" },
+  { id: "gpt-4o", name: "GPT-4o", provider: "openai" },
+];
+
 // --- PromptBox Component ---
 interface PromptBoxProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
-  onSend?: (message: string) => void;
+  onSend?: (message: string, mode?: "plan" | "build", options?: { webSearch?: boolean }) => void;
   onToolChange?: (toolId: string | null) => void;
+  onModeChange?: (mode: "plan" | "build") => void;
+  onWebSearchChange?: (enabled: boolean) => void;
   isTranscribing?: boolean;
+  showModelSelector?: boolean;
 }
 
 export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
-  ({ className, onSend, onToolChange, isTranscribing = false, ...props }, ref) => {
+  ({ className, onSend, onToolChange, onModeChange, onWebSearchChange, isTranscribing = false, showModelSelector = true, ...props }, ref) => {
     const internalTextareaRef = React.useRef<HTMLTextAreaElement>(null);
     const fileInputRef = React.useRef<HTMLInputElement>(null);
     const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
     const audioChunksRef = React.useRef<Blob[]>([]);
     const [value, setValue] = React.useState("");
     const [imagePreview, setImagePreview] = React.useState<string | null>(null);
-    const [selectedTool, setSelectedTool] = React.useState<string | null>(null);
+    const [webSearchActive, setWebSearchActive] = React.useState(false);
+    const [chatModeActive, setChatModeActive] = React.useState(false);
     const [isPopoverOpen, setIsPopoverOpen] = React.useState(false);
+    const [isModelPopoverOpen, setIsModelPopoverOpen] = React.useState(false);
     const [isImageDialogOpen, setIsImageDialogOpen] = React.useState(false);
     const [isRecording, setIsRecording] = React.useState(false);
+    const [models, setModels] = React.useState<AIModel[]>(PROMPTBOX_FALLBACK_MODELS);
+
+    const { selectedModel, setSelectedModel } = useUIStore();
 
     React.useImperativeHandle(ref, () => internalTextareaRef.current!, []);
+
+    // Fetch available models
+    React.useEffect(() => {
+      let cancelled = false;
+      fetchAvailableModels()
+        .then((data) => {
+          if (cancelled) return;
+          if (data.models && data.models.length > 0) {
+            setModels(
+              data.models.map((m: any) => ({
+                id: m.id,
+                name: m.name,
+                provider: m.provider as AIProvider,
+              }))
+            );
+          }
+        })
+        .catch(() => { /* keep fallback models */ });
+      return () => { cancelled = true; };
+    }, []);
 
     React.useLayoutEffect(() => {
       const textarea = internalTextareaRef.current;
@@ -229,7 +281,8 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
 
     const handleSend = () => {
       if (value.trim() && onSend) {
-        onSend(value.trim());
+        const mode = chatModeActive ? "plan" : "build";
+        onSend(value.trim(), mode, { webSearch: webSearchActive });
         setValue("");
         setImagePreview(null);
       }
@@ -370,15 +423,19 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
                   <div className="flex flex-col gap-1">
                     <button
                       onClick={() => {
-                        const newTool = selectedTool === "searchWeb" ? null : "searchWeb";
-                        setSelectedTool(newTool);
+                        setWebSearchActive(!webSearchActive);
                         setIsPopoverOpen(false);
-                        onToolChange?.(newTool);
+                        onWebSearchChange?.(!webSearchActive);
+                        onToolChange?.(!webSearchActive ? "searchWeb" : null);
                       }}
-                      className="flex w-full items-center gap-2 rounded-md p-2 text-left text-sm hover:bg-white/10"
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md p-2 text-left text-sm hover:bg-white/10",
+                        webSearchActive && "bg-white/10 text-[hsl(234,89%,74%)]"
+                      )}
                     >
                       <GlobeIcon className="h-4 w-4" />
                       <span>Search in web</span>
+                      {webSearchActive && <CheckIcon className="h-3 w-3 ml-auto" />}
                     </button>
                   </div>
                 </PopoverContent>
@@ -389,13 +446,14 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
                   <button
                     type="button"
                     onClick={() => {
-                      const newTool = selectedTool === "chat" ? null : "chat";
-                      setSelectedTool(newTool);
-                      onToolChange?.(newTool);
+                      const newActive = !chatModeActive;
+                      setChatModeActive(newActive);
+                      const newMode = newActive ? "plan" : "build";
+                      onModeChange?.(newMode);
                     }}
                     className={cn(
                       "flex h-8 items-center gap-2 rounded-full px-2 text-sm transition-colors focus-visible:outline-none cursor-pointer",
-                      selectedTool === "chat"
+                      chatModeActive
                         ? "bg-white/10 text-[hsl(234,89%,74%)]"
                         : "text-white/70 hover:bg-white/10"
                     )}
@@ -405,25 +463,91 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top" showArrow={true}>
-                  <p>{selectedTool === "chat" ? "Disable chat" : "Enable chat"}</p>
+                  <p>{chatModeActive ? "Switch to Build mode" : "Switch to Plan/Chat mode"}</p>
                 </TooltipContent>
               </Tooltip>
 
-              {selectedTool === "searchWeb" && (
-                <>
-                  <div className="h-4 w-px bg-white/20" />
-                  <button
-                    onClick={() => {
-                      setSelectedTool(null);
-                      onToolChange?.(null);
-                    }}
-                    className="flex h-8 items-center gap-2 rounded-full px-2 text-sm bg-white/10 text-[hsl(234,89%,74%)] hover:bg-white/15 cursor-pointer transition-colors"
-                  >
-                    <GlobeIcon className="h-4 w-4" />
-                    Web
-                    <XIcon className="h-3 w-3" />
-                  </button>
-                </>
+              {/* Active toggles indicators */}
+              {(webSearchActive || chatModeActive) && (
+                <div className="h-4 w-px bg-white/20" />
+              )}
+
+              {webSearchActive && (
+                <button
+                  onClick={() => {
+                    setWebSearchActive(false);
+                    onWebSearchChange?.(false);
+                    onToolChange?.(null);
+                  }}
+                  className="flex h-8 items-center gap-2 rounded-full px-2 text-sm bg-white/10 text-[hsl(234,89%,74%)] hover:bg-white/15 cursor-pointer transition-colors"
+                >
+                  <GlobeIcon className="h-4 w-4" />
+                  Web
+                  <XIcon className="h-3 w-3" />
+                </button>
+              )}
+
+              {chatModeActive && (
+                <button
+                  onClick={() => {
+                    setChatModeActive(false);
+                    onModeChange?.("build");
+                  }}
+                  className="flex h-8 items-center gap-2 rounded-full px-2 text-sm bg-white/10 text-amber-400 hover:bg-white/15 cursor-pointer transition-colors"
+                >
+                  <MessageSquareIcon className="h-4 w-4" />
+                  Plan
+                  <XIcon className="h-3 w-3" />
+                </button>
+              )}
+
+              {/* Model Selector */}
+              {showModelSelector && (
+                <Popover open={isModelPopoverOpen} onOpenChange={setIsModelPopoverOpen}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="flex h-8 items-center gap-1.5 rounded-full px-2.5 text-sm text-white/70 transition-colors hover:bg-white/10 focus-visible:outline-none cursor-pointer border border-white/10"
+                        >
+                          <CpuIcon className="h-3.5 w-3.5" />
+                          <span className="max-w-[100px] truncate text-xs">{selectedModel?.name || "Model"}</span>
+                          <ChevronDownIcon className="h-3 w-3 opacity-50" />
+                        </button>
+                      </PopoverTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" showArrow={true}>
+                      <p>Select AI Model</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <PopoverContent side="top" align="start" className="w-56 max-h-64 overflow-y-auto">
+                    <div className="text-[10px] uppercase tracking-widest text-white/40 font-semibold px-2 py-1">
+                      Select Model
+                    </div>
+                    <div className="flex flex-col gap-0.5 mt-1">
+                      {models.map((model) => (
+                        <button
+                          key={model.id}
+                          onClick={() => {
+                            setSelectedModel(model);
+                            setIsModelPopoverOpen(false);
+                          }}
+                          className={cn(
+                            "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs hover:bg-white/10 transition-colors",
+                            selectedModel?.id === model.id && "bg-white/10 text-[hsl(234,89%,74%)]"
+                          )}
+                        >
+                          <div className="flex items-center gap-2">
+                            <CpuIcon className="h-3 w-3 opacity-60" />
+                            <span className="truncate">{model.name}</span>
+                          </div>
+                          {selectedModel?.id === model.id && <CheckIcon className="h-3 w-3 shrink-0" />}
+                        </button>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               )}
 
               <div className="ml-auto flex items-center gap-2">

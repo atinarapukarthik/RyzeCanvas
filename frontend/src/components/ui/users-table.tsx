@@ -90,14 +90,10 @@ export function UsersTable({
 }: UsersTableProps = {}) {
 	const users = initialUsers;
 	const [selectedUser, setSelectedUser] = useState<string | null>("1");
-	const [mounted, setMounted] = useState(false);
+	const [mounted, setMounted] = useState(true);
 	const shouldReduceMotion = useReducedMotion();
 	const { theme } = useTheme();
 	const isDark = theme === "dark";
-
-	useEffect(() => {
-		setMounted(true);
-	}, []);
 
 	const handleUserSelect = (userId: string) => {
 		setSelectedUser(userId);
@@ -278,8 +274,8 @@ export function UsersTable({
 								<motion.div key={user.id} variants={rowVariants}>
 									<div
 										className={`px-8 py-3 cursor-pointer group relative transition-all duration-200 ${selectedUser === user.id
-												? "bg-muted/50 border-b border-border/30"
-												: "hover:bg-muted/30"
+											? "bg-muted/50 border-b border-border/30"
+											: "hover:bg-muted/30"
 											} ${userIndex < users.length - 1 && selectedUser !== user.id
 												? "border-b border-border/20"
 												: ""

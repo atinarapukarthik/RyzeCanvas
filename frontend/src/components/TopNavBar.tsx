@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback } from "react";
 import { Wand2, History, Settings, ShieldCheck, LogOut, GitBranch, FolderOpen, Clock, ArrowLeft, Zap, LayoutDashboard } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuthStore } from "@/stores/authStore";
@@ -7,6 +8,8 @@ import { useRouter, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ProviderSelector } from "@/components/ProviderSelector";
 import { useUIStore } from "@/stores/uiStore";
+import { fetchProjects } from "@/lib/api";
+import { toast } from "sonner";
 import Link from "next/link";
 
 const navItems = [
@@ -39,6 +42,31 @@ export function TopNavBar() {
       setGithubModal(true);
     }
   };
+
+  // Navigation callbacks for Studio mode
+  const handleNavigateToProjects = useCallback(() => {
+    console.log('[Navigation] Project button clicked');
+    console.log('[Navigation] Router available:', !!router);
+    try {
+      router.push('/dashboard');
+      console.log('[Navigation] Navigation initiated to /dashboard');
+    } catch (error) {
+      console.error('[Navigation] Failed to navigate:', error);
+      toast.error('Failed to navigate to dashboard');
+    }
+  }, [router]);
+
+  const handleShowHistory = useCallback(() => {
+    console.log('[History] History button clicked');
+    console.log('[History] Router available:', !!router);
+    try {
+      router.push('/history');
+      console.log('[History] Navigation initiated to /history');
+    } catch (error) {
+      console.error('[History] Failed to navigate:', error);
+      toast.error('Failed to navigate to history');
+    }
+  }, [router]);
 
   return (
     <header className={`h-16 border-b ${isDashboard ? "border-transparent bg-transparent absolute top-0 left-0 right-0 z-20" : "border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60"}`}>
@@ -92,10 +120,16 @@ export function TopNavBar() {
         {/* Studio Controls */}
         {isStudio && (
           <div className="flex items-center gap-2 flex-1 ml-4">
-            <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors">
+            <button
+              onClick={handleNavigateToProjects}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+            >
               <FolderOpen className="h-3.5 w-3.5" /> Projects
             </button>
-            <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors">
+            <button
+              onClick={handleShowHistory}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+            >
               <Clock className="h-3.5 w-3.5" /> History
             </button>
 

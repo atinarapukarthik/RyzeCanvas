@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, ChevronDown, Cpu, Sparkles, Zap, Globe } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, ChevronDown, Cpu, Sparkles, Zap, Globe, Brain, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     DropdownMenu,
@@ -10,8 +11,9 @@ import {
     DropdownMenuSeparator,
     DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
+import { fetchAvailableModels } from "@/lib/api";
 
-export type AIProvider = "gemini" | "claude" | "openrouter" | "ollama";
+export type AIProvider = "gemini" | "claude" | "openrouter" | "ollama" | "openai";
 
 export interface AIModel {
     id: string;
@@ -19,22 +21,32 @@ export interface AIModel {
     provider: AIProvider;
 }
 
-const MODELS: AIModel[] = [
+// Static fallback models (used if API fetch fails)
+const FALLBACK_MODELS: AIModel[] = [
     { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "gemini" },
     { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "gemini" },
-    { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet", provider: "claude" },
-    { id: "claude-3-opus", name: "Claude 3 Opus", provider: "claude" },
-    { id: "gpt-4o", name: "GPT-4o (via OpenRouter)", provider: "openrouter" },
-    { id: "llama-3-70b", name: "Llama 3 70b (via OpenRouter)", provider: "openrouter" },
+    { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", provider: "claude" },
+    { id: "claude-3-opus-20240229", name: "Claude 3 Opus", provider: "claude" },
+    { id: "gpt-4o", name: "GPT-4o", provider: "openai" },
+    { id: "anthropic/claude-3.5-sonnet", name: "Claude 3.5 Sonnet (via OR)", provider: "openrouter" },
+    { id: "meta-llama/llama-3-70b-instruct", name: "Llama 3 70B (via OR)", provider: "openrouter" },
     { id: "llama3", name: "Llama 3 (Local)", provider: "ollama" },
-    { id: "deepseek-coder", name: "DeepSeek Coder (Local)", provider: "ollama" },
 ];
 
-const PROVIDER_ICONS: Record<AIProvider, React.ComponentType<{ className?: string }>> = {
+const PROVIDER_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
     gemini: Sparkles,
     claude: Cpu,
     openrouter: Globe,
     ollama: Zap,
+    openai: Brain,
+};
+
+const PROVIDER_NAMES: Record<string, string> = {
+    gemini: "Google Gemini",
+    claude: "Anthropic Claude",
+    openrouter: "OpenRouter",
+    ollama: "Ollama (Local)",
+    openai: "OpenAI",
 };
 
 interface ProviderSelectorProps {
@@ -43,37 +55,71 @@ interface ProviderSelectorProps {
 }
 
 export function ProviderSelector({ selectedModelId, onSelectModel }: ProviderSelectorProps) {
-    const selectedModel = MODELS.find((m) => m.id === selectedModelId) || MODELS[0];
-    const Icon = PROVIDER_ICONS[selectedModel.provider];
+    const [models, setModels] = useState<AIModel[]>(FALLBACK_MODELS);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        let cancelled = false;
+        fetchAvailableModels()
+            .then((data) => {
+                if (cancelled) return;
+                if (data.models && data.models.length > 0) {
+                    setModels(
+                        data.models.map((m) => ({
+                            id: m.id,
+                            name: m.name,
+                            provider: m.provider as AIProvider,
+                        }))
+                    );
+                }
+            })
+            .catch(() => {
+                // Keep fallback models on error
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, []);
+
+    const selectedModel = models.find((m) => m.id === selectedModelId) || models[0];
+    const Icon = PROVIDER_ICONS[selectedModel?.provider] || Globe;
+
+    // Get unique providers from available models
+    const providers = [...new Set(models.map((m) => m.provider))];
 
     return (
         <DropdownMenu>
             <DropdownMenuTrigger asChild>
                 <Button variant="outline-glow" size="sm" className="h-8 gap-2 px-3 bg-secondary/30">
-                    <Icon className="h-3.5 w-3.5 text-primary" />
-                    <span className="text-xs font-medium">{selectedModel.name}</span>
+                    {loading ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                    ) : (
+                        <Icon className="h-3.5 w-3.5 text-primary" />
+                    )}
+                    <span className="text-xs font-medium">{selectedModel?.name || "Select Model"}</span>
                     <ChevronDown className="h-3 w-3 text-muted-foreground" />
                 </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56 glass-strong border-border/50">
+            <DropdownMenuContent align="end" className="w-64 max-h-80 overflow-y-auto glass-strong border-border/50">
                 <DropdownMenuLabel className="text-[10px] uppercase tracking-widest text-muted-foreground px-2 py-1.5">
-                    Select AI Provider
+                    Select AI Model
                 </DropdownMenuLabel>
 
-                {(["gemini", "claude", "openrouter", "ollama"] as AIProvider[]).map((provider) => (
+                {providers.map((provider) => (
                     <div key={provider}>
                         <DropdownMenuSeparator className="bg-border/30" />
                         <div className="px-2 py-1 text-[10px] font-semibold text-primary/70 uppercase">
-                            {provider}
+                            {PROVIDER_NAMES[provider] || provider}
                         </div>
-                        {MODELS.filter((m) => m.provider === provider).map((model) => (
+                        {models.filter((m) => m.provider === provider).map((model) => (
                             <DropdownMenuItem
                                 key={model.id}
                                 onClick={() => onSelectModel(model)}
                                 className="flex items-center justify-between text-xs cursor-pointer focus:bg-primary/10 focus:text-foreground"
                             >
-                                {model.name}
-                                {selectedModelId === model.id && <Check className="h-3 w-3 text-primary" />}
+                                <span className="truncate mr-2">{model.name}</span>
+                                {selectedModelId === model.id && <Check className="h-3 w-3 text-primary shrink-0" />}
                             </DropdownMenuItem>
                         ))}
                     </div>

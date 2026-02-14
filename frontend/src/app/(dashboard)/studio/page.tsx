@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, Suspense, useCallback } from "react";
-import Link from 'next/link';
+import { useState, useRef, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,12 +12,13 @@ import { createProject, searchWeb, updateProject, streamChat, fetchProjects } fr
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-    Zap, GitBranch, Monitor, Smartphone, GitFork, Download, Loader2,
-    ChevronDown, ChevronRight, User, Bot, Search, MessageSquare, Lightbulb, Globe, Code2, Eye,
-    FileCode, Pencil, Check, X, LogOut, FolderOpen, Clock, GitCommit,
-    RotateCcw, Copy, Play, Save, Folder, File, FolderTree, GitCompare,
+    GitBranch, Monitor, Smartphone, Download, Loader2,
+    ChevronDown, ChevronRight, User, Bot, Search, Globe, Code2, Eye,
+    FileCode, Pencil, Check, X, FolderOpen, Clock, GitCommit,
+    RotateCcw, Copy, Play, Folder, FolderTree, GitCompare,
+    Rocket, CircleCheck, CircleDot, Package, Terminal, ArrowRight,
+    CheckCircle, Hash, Sparkles, ListTodo, ExternalLink, AlertTriangle, Lightbulb,
 } from "lucide-react";
-import { ProviderSelector, AIModel } from "@/components/ProviderSelector";
 
 interface Message {
     role: 'user' | 'ai';
@@ -27,40 +27,179 @@ interface Message {
     isSearching?: boolean;
     isThinking?: boolean;
     isCommit?: boolean;
+    isPlanQuestions?: boolean;
+    isPlanReady?: boolean;
+    isImplementing?: boolean;
     files?: { name: string; path: string; status: 'added' | 'modified' }[];
+    questions?: PlanQuestion[];
+    plan?: PlanData;
+    implementationStatus?: ImplementationStatus;
+}
+
+interface PlanQuestion {
+    id: string;
+    question: string;
+    options: string[];
+    selectedOption?: number;
+    customAnswer?: string;
+}
+
+interface PlanFile {
+    name: string;
+    path: string;
+    description: string;
+}
+
+interface PlanSkill {
+    id: string;
+    name: string;
+    icon: string;
+}
+
+interface PlanData {
+    title: string;
+    description: string;
+    files: PlanFile[];
+    skills: PlanSkill[];
+    steps: string[];
+    libraries: string[];
+}
+
+interface ImplementationTodo {
+    id: string;
+    label: string;
+    status: 'pending' | 'in_progress' | 'completed';
+}
+
+interface FileUpdateStatus {
+    path: string;
+    name: string;
+    status: 'pending' | 'writing' | 'completed';
+    code?: string;
+}
+
+interface ImplementationStatus {
+    phase: 'installing' | 'creating' | 'done';
+    todos: ImplementationTodo[];
+    installingLibraries: { name: string; status: 'pending' | 'installing' | 'installed' }[];
+    fileUpdates: FileUpdateStatus[];
+    currentFileIndex: number;
 }
 
 /**
  * Build a self-contained HTML page that renders the given React+Tailwind code
  * inside an iframe via srcdoc. Uses CDN-loaded React 18, ReactDOM, Babel, and Tailwind CSS.
+ *
+ * When `allFiles` is provided (multi-file project), inlines all component files
+ * so cross-file references (e.g. HeroSection imported in App.tsx) resolve at runtime.
  */
-function buildPreviewHtml(code: string): string {
-    // Extract the component name BEFORE transforming exports
-    const fnMatch = code.match(/export\s+default\s+function\s+(\w+)/);
-    const constMatch = code.match(/export\s+default\s+(\w+)\s*;?\s*$/m);
-    const standaloneFn = code.match(/^function\s+(\w+)/m);
-    const componentName = fnMatch?.[1] || constMatch?.[1] || standaloneFn?.[1] || 'App';
+function buildPreviewHtml(code: string, allFiles?: Record<string, string>): string {
+    // ── Multi-file merge ──
+    // When the AI generates a multi-file project, App.tsx may reference HeroSection, Footer,
+    // Navbar, etc. from separate files. We inline them all into a single preview.
+    let mergedCode = code;
+
+    if (allFiles && Object.keys(allFiles).length > 0) {
+        const componentFiles: { path: string; code: string }[] = [];
+        const mainFilePaths = ['src/App.tsx', 'src/App.jsx', 'app/page.tsx', 'app/page.jsx'];
+
+        for (const [filePath, fileCode] of Object.entries(allFiles)) {
+            if (
+                (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) &&
+                !mainFilePaths.includes(filePath) &&
+                !filePath.includes('main.tsx') &&
+                !filePath.includes('main.jsx') &&
+                !filePath.includes('layout.tsx') &&
+                typeof fileCode === 'string' &&
+                (fileCode.includes('function ') || fileCode.includes('const ') || fileCode.includes('export'))
+            ) {
+                componentFiles.push({ path: filePath, code: fileCode });
+            }
+        }
+
+        const mainFile =
+            allFiles['src/App.tsx'] ||
+            allFiles['src/App.jsx'] ||
+            allFiles['app/page.tsx'] ||
+            allFiles['app/page.jsx'] ||
+            code;
+
+        if (componentFiles.length > 0) {
+            const parts = componentFiles.map((f) => f.code);
+            parts.push(mainFile);
+            mergedCode = parts.join('\n\n');
+        } else {
+            mergedCode = mainFile;
+        }
+    }
+
+    // Extract the component name from the LAST default export (the main App)
+    const lines = mergedCode.split('\n');
+    let componentName = 'App';
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const fnM = lines[i].match(/export\s+default\s+function\s+(\w+)/);
+        if (fnM) { componentName = fnM[1]; break; }
+        const constM = lines[i].match(/export\s+default\s+(\w+)\s*;?\s*$/);
+        if (constM) { componentName = constM[1]; break; }
+    }
+    if (componentName === 'App') {
+        const standaloneFn = mergedCode.match(/^function\s+(\w+)/m);
+        if (standaloneFn) componentName = standaloneFn[1];
+    }
 
     // Clean code for browser execution:
-    // 1. Remove import lines (they won't resolve in browser)
-    // 2. Strip TypeScript-only syntax (interfaces, type aliases, generic type params)
-    // 3. Handle exports properly
-    const codeWithoutImports = code
-        // Remove all import statements (single and multi-line)
-        .replace(/^import\s+.*?from\s+['"].*?['"];?\s*$/gm, '')
-        .replace(/^import\s+['"].*?['"];?\s*$/gm, '')
-        .replace(/^import\s+type\s+.*?from\s+['"].*?['"];?\s*$/gm, '')
-        // Remove TypeScript interface blocks (multi-line safe)
-        .replace(/^(?:export\s+)?interface\s+\w+(?:\s+extends\s+\w+)?\s*\{[\s\S]*?\n\}/gm, '')
-        // Remove TypeScript type aliases (multi-line safe)
-        .replace(/^(?:export\s+)?type\s+\w+(?:<[^>]*>)?\s*=\s*[\s\S]*?;\s*$/gm, '')
-        // Remove standalone type annotations on function params: (props: Type) → (props)
-        .replace(/:\s*(?:React\.)?(?:FC|FunctionComponent|ComponentProps|HTMLAttributes|MouseEvent|ChangeEvent|FormEvent|KeyboardEvent|CSSProperties)(?:<[^>]*>)?/g, '')
-        // Handle default export
-        .replace(/^export\s+default\s+function\s+/m, 'function ')
-        .replace(/^export\s+default\s+/m, 'const __DefaultExport__ = ')
+    // Babel standalone with TypeScript preset handles all TS syntax (types, interfaces, generics).
+    // We only need to handle imports (unresolvable in browser) and exports (need to identify the root component).
+
+    const codeWithoutImports = mergedCode
+        // Remove all import statements (single-line and multi-line)
+        .replace(/^import[\s\S]*?from\s*['"][^'"]*['"];?\s*$/gm, '')
+        .replace(/^import\s*['"][^'"]*['"];?\s*$/gm, '')
+        // Handle default exports:
+        // 1. `export default function Foo` → `function Foo` (keep the declaration)
+        .replace(/^export\s+default\s+function\s+/gm, 'function ')
+        // 2. `export default Foo;` (standalone name reference) → remove entirely
+        //    The component is already defined above by its function/const declaration.
+        .replace(/^export\s+default\s+[A-Z]\w*\s*;?\s*$/gm, '')
+        // 3. `export default <expression>` (arrow fn, class expr, etc.) → assign to a var
+        .replace(/^export\s+default\s+/gm, 'const __DefaultExport__ = ')
         // Remove export keyword from named exports (keep the declaration)
         .replace(/^export\s+(function|const|let|var|class)\s+/gm, '$1 ');
+
+    // Scan user code for declared names to avoid duplicate identifier errors with icon stubs
+    const declaredNames = new Set<string>();
+    const declRegex = /(?:^|\s)(?:function|const|let|var|class)\s+(\w+)/gm;
+    let declMatch;
+    while ((declMatch = declRegex.exec(codeWithoutImports)) !== null) {
+        declaredNames.add(declMatch[1]);
+    }
+
+    const allIconNames = [
+        'Menu', 'X', 'ChevronDown', 'ChevronRight', 'ChevronLeft', 'ChevronUp',
+        'Search', 'Heart', 'Star', 'ShoppingCart', 'User', 'Bell', 'Settings',
+        'Mail', 'Phone', 'MapPin', 'Calendar', 'Clock', 'Check', 'Plus', 'Minus',
+        'Edit', 'Trash', 'Eye', 'EyeOff', 'Lock', 'Unlock', 'Home', 'ArrowRight',
+        'ArrowLeft', 'ExternalLink', 'Download', 'Upload', 'Share', 'Filter',
+        'MoreHorizontal', 'MoreVertical', 'Sun', 'Moon', 'Github', 'Twitter',
+        'Linkedin', 'Facebook', 'Instagram', 'Youtube', 'Globe', 'Zap', 'Award',
+        'TrendingUp', 'BarChart', 'PieChart', 'Activity', 'AlertCircle', 'Info',
+        'HelpCircle', 'XCircle', 'CheckCircle', 'AlertTriangle', 'Loader2',
+        'RefreshCw', 'RotateCcw', 'Copy', 'Clipboard', 'Send', 'MessageSquare',
+        'Image', 'Camera', 'Video', 'Mic', 'Volume2', 'VolumeX', 'Wifi', 'WifiOff',
+        'Battery', 'Bluetooth', 'Monitor', 'Smartphone', 'Tablet', 'Laptop',
+        'Server', 'Database', 'Cloud', 'Code', 'Terminal', 'FileText', 'Folder',
+        'Archive', 'Box', 'Package', 'Gift', 'CreditCard', 'DollarSign', 'Percent',
+        'Tag', 'Bookmark', 'Flag', 'Hash', 'AtSign', 'Link', 'Paperclip', 'Scissors',
+        'Layers', 'Layout', 'Grid', 'List', 'Columns', 'Sidebar', 'PanelLeft',
+        'LogIn', 'LogOut', 'UserPlus', 'Users', 'Shield', 'Key', 'Play', 'Pause',
+        'SkipForward', 'SkipBack', 'Maximize', 'Minimize', 'Move', 'Trash2',
+        'Edit2', 'Edit3', 'Save', 'FilePlus', 'FolderPlus', 'FolderOpen',
+        'ChevronFirst', 'ChevronLast', 'ChevronsUpDown', 'ArrowUpDown',
+    ];
+    const safeIcons = allIconNames.filter(name => !declaredNames.has(name));
+    const iconDestructuring = safeIcons.length > 0
+        ? `const { ${safeIcons.join(', ')} } = lucideReact;`
+        : '// All icon names conflict with user code — icons available via lucideReact proxy';
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -104,27 +243,7 @@ function buildPreviewHtml(code: string): string {
             }
         };
         const lucideReact = new Proxy({}, iconHandler);
-        const { Menu, X, ChevronDown, ChevronRight, ChevronLeft, ChevronUp,
-                Search, Heart, Star, ShoppingCart, User, Bell, Settings,
-                Mail, Phone, MapPin, Calendar, Clock, Check, Plus, Minus,
-                Edit, Trash, Eye, EyeOff, Lock, Unlock, Home, ArrowRight,
-                ArrowLeft, ExternalLink, Download, Upload, Share, Filter,
-                MoreHorizontal, MoreVertical, Sun, Moon, Github, Twitter,
-                Linkedin, Facebook, Instagram, Youtube, Globe, Zap, Award,
-                TrendingUp, BarChart, PieChart, Activity, AlertCircle, Info,
-                HelpCircle, XCircle, CheckCircle, AlertTriangle, Loader2,
-                RefreshCw, RotateCcw, Copy, Clipboard, Send, MessageSquare,
-                Image, Camera, Video, Mic, Volume2, VolumeX, Wifi, WifiOff,
-                Battery, Bluetooth, Monitor, Smartphone, Tablet, Laptop,
-                Server, Database, Cloud, Code, Terminal, FileText, Folder,
-                Archive, Box, Package, Gift, CreditCard, DollarSign, Percent,
-                Tag, Bookmark, Flag, Hash, AtSign, Link, Paperclip, Scissors,
-                Layers, Layout, Grid, List, Columns, Sidebar, PanelLeft,
-                LogIn, LogOut, UserPlus, Users, Shield, Key, Play, Pause,
-                SkipForward, SkipBack, Maximize, Minimize, Move, Trash2,
-                Edit2, Edit3, Save, FilePlus, FolderPlus, FolderOpen,
-                ChevronFirst, ChevronLast, ChevronsUpDown, ArrowUpDown
-        } = lucideReact;
+        ${iconDestructuring}
 
         // Stub for common UI component libraries (framer-motion, etc.)
         const motion = new Proxy({}, {
@@ -143,6 +262,31 @@ function buildPreviewHtml(code: string): string {
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(React.createElement(AppComponent));
     </script>
+    <script>
+        // Error detection for AI-generated code
+        window.addEventListener('error', function(event) {
+            window.parent.postMessage({
+                type: 'preview-error',
+                error: {
+                    message: event.message,
+                    source: event.filename,
+                    line: event.lineno,
+                    column: event.colno,
+                    stack: event.error?.stack
+                }
+            }, '*');
+        });
+
+        window.addEventListener('unhandledrejection', function(event) {
+            window.parent.postMessage({
+                type: 'preview-error',
+                error: {
+                    message: event.reason?.message || String(event.reason),
+                    stack: event.reason?.stack
+                }
+            }, '*');
+        });
+    </script>
 </body>
 </html>`;
 }
@@ -159,23 +303,21 @@ interface GeneratedFile {
 }
 
 /**
- * Parse generated code into a visual folder structure.
- * The main component goes into src/components/Generated.tsx
- * and we show the typical Next.js project structure around it.
+ * Parse a flat file map (path → content) into a nested folder tree.
+ * Falls back to wrapping a single code string in a default structure.
  */
-function buildFileTree(code: string): GeneratedFile[] {
-    if (!code) return [];
+function buildFileTree(code: string, allFiles?: Record<string, string>): GeneratedFile[] {
+    if (!code && (!allFiles || Object.keys(allFiles).length === 0)) return [];
 
+    // If we have actual generated files from plan_implement, build tree from those
+    if (allFiles && Object.keys(allFiles).length > 0) {
+        return buildTreeFromPaths(allFiles);
+    }
+
+    // Fallback: single component mode — wrap in minimal structure
     return [
         {
             name: 'src', path: 'src', type: 'folder', content: '', children: [
-                {
-                    name: 'app', path: 'src/app', type: 'folder', content: '', children: [
-                        { name: 'layout.tsx', path: 'src/app/layout.tsx', type: 'file', content: 'import "./globals.css";\n\nexport default function RootLayout({ children }: { children: React.ReactNode }) {\n  return (\n    <html lang="en">\n      <body>{children}</body>\n    </html>\n  );\n}' },
-                        { name: 'page.tsx', path: 'src/app/page.tsx', type: 'file', content: 'import Generated from "@/components/Generated";\n\nexport default function Home() {\n  return <Generated />;\n}' },
-                        { name: 'globals.css', path: 'src/app/globals.css', type: 'file', content: '@tailwind base;\n@tailwind components;\n@tailwind utilities;' },
-                    ]
-                },
                 {
                     name: 'components', path: 'src/components', type: 'folder', content: '', children: [
                         { name: 'Generated.tsx', path: 'src/components/Generated.tsx', type: 'file', content: code },
@@ -183,10 +325,56 @@ function buildFileTree(code: string): GeneratedFile[] {
                 },
             ]
         },
-        { name: 'package.json', path: 'package.json', type: 'file', content: '{\n  "name": "ryzecanvas-app",\n  "version": "0.1.0",\n  "scripts": {\n    "dev": "next dev",\n    "build": "next build",\n    "start": "next start"\n  },\n  "dependencies": {\n    "next": "^15.0.0",\n    "react": "^19.0.0",\n    "react-dom": "^19.0.0",\n    "lucide-react": "^0.400.0"\n  },\n  "devDependencies": {\n    "tailwindcss": "^3.4.0",\n    "typescript": "^5.0.0",\n    "@types/react": "^19.0.0"\n  }\n}' },
-        { name: 'tailwind.config.ts', path: 'tailwind.config.ts', type: 'file', content: 'import type { Config } from "tailwindcss";\n\nconst config: Config = {\n  content: ["./src/**/*.{js,ts,jsx,tsx,mdx}"],\n  theme: { extend: {} },\n  plugins: [],\n};\n\nexport default config;' },
-        { name: 'tsconfig.json', path: 'tsconfig.json', type: 'file', content: '{\n  "compilerOptions": {\n    "target": "es5",\n    "lib": ["dom", "es6"],\n    "jsx": "preserve",\n    "module": "esnext",\n    "moduleResolution": "bundler",\n    "paths": { "@/*": ["./src/*"] },\n    "strict": true\n  },\n  "include": ["src"],\n  "exclude": ["node_modules"]\n}' },
     ];
+}
+
+/**
+ * Build a nested folder tree from a flat map of file paths → code content.
+ */
+function buildTreeFromPaths(files: Record<string, string>): GeneratedFile[] {
+    const root: GeneratedFile[] = [];
+
+    const sortedPaths = Object.keys(files).sort();
+
+    for (const filePath of sortedPaths) {
+        const parts = filePath.split('/');
+        let currentLevel = root;
+
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            const currentPath = parts.slice(0, i + 1).join('/');
+            const isFile = i === parts.length - 1;
+
+            const existing = currentLevel.find((f) => f.name === part);
+
+            if (isFile) {
+                if (!existing) {
+                    currentLevel.push({
+                        name: part,
+                        path: currentPath,
+                        type: 'file',
+                        content: files[filePath],
+                    });
+                }
+            } else {
+                if (existing && existing.type === 'folder') {
+                    currentLevel = existing.children || [];
+                } else {
+                    const folder: GeneratedFile = {
+                        name: part,
+                        path: currentPath,
+                        type: 'folder',
+                        content: '',
+                        children: [],
+                    };
+                    currentLevel.push(folder);
+                    currentLevel = folder.children!;
+                }
+            }
+        }
+    }
+
+    return root;
 }
 
 /**
@@ -198,7 +386,17 @@ function FileTreeView({ files, activeFile, onSelect, depth = 0 }: {
     onSelect: (file: GeneratedFile) => void;
     depth?: number;
 }) {
-    const [expanded, setExpanded] = useState<Record<string, boolean>>({ 'src': true, 'src/app': true, 'src/components': true });
+    const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
+        // Auto-expand top-level folders
+        const initial: Record<string, boolean> = {};
+        files.forEach((f) => {
+            if (f.type === 'folder') initial[f.path] = true;
+            f.children?.forEach((c) => {
+                if (c.type === 'folder') initial[c.path] = true;
+            });
+        });
+        return initial;
+    });
 
     return (
         <div className="space-y-0.5">
@@ -272,16 +470,106 @@ function StudioContent() {
     const [repoUrl, setRepoUrl] = useState('');
     const [chatCollapsed, setChatCollapsed] = useState(false);
     const [projectId, setProjectId] = useState<string>('');
+    const [sessionId, setSessionId] = useState<string>(() => {
+        // Recover sessionId from sessionStorage so state persists across page reloads
+        if (typeof window !== 'undefined') {
+            const stored = sessionStorage.getItem('ryze-current-session-id');
+            if (stored) return stored;
+        }
+        const newId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        if (typeof window !== 'undefined') {
+            sessionStorage.setItem('ryze-current-session-id', newId);
+        }
+        return newId;
+    });
     const [activeFile, setActiveFile] = useState<string>('src/components/Generated.tsx');
     const [viewingFileContent, setViewingFileContent] = useState<string>('');
+    const [planQuestions, setPlanQuestions] = useState<PlanQuestion[]>([]);
+    const [planData, setPlanData] = useState<PlanData | null>(null);
+    const [isAnsweringQuestions, setIsAnsweringQuestions] = useState(false);
+    const [implementationStatus, setImplementationStatus] = useState<ImplementationStatus | null>(null);
+    const [isImplementing, setIsImplementing] = useState(false);
+    const [previewFileQueue, setPreviewFileQueue] = useState<FileUpdateStatus[]>([]);
+    const [currentPreviewFile, setCurrentPreviewFile] = useState<string>('');
+    const [allGeneratedFiles, setAllGeneratedFiles] = useState<Record<string, string>>({});
+    const [previousAllFiles, setPreviousAllFiles] = useState<Record<string, string>>({});
+    const [diffFile, setDiffFile] = useState<string>('');
+    const [previewRoute, setPreviewRoute] = useState<string>('');
+    const [routeSearchOpen, setRouteSearchOpen] = useState(false);
+    const [routeSearchQuery, setRouteSearchQuery] = useState('');
+    const [iframeKey, setIframeKey] = useState(0);
+    const [previewError, setPreviewError] = useState<{ message: string; stack?: string } | null>(null);
+    const [errorModalOpen, setErrorModalOpen] = useState(false);
+    const [archivesModalOpen, setArchivesModalOpen] = useState(false);
+    const [archivedChats, setArchivedChats] = useState<any[]>([]);
+    const [historySource, setHistorySource] = useState<'archives' | 'projects'>('archives');
 
     const chatEndRef = useRef<HTMLDivElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const streamingMessageRef = useRef<string>('');
+    const initialPromptSentRef = useRef<boolean>(false);
+    const handleSendRef = useRef<((msg?: string) => Promise<void>) | null>(null);
+    const routeSearchRef = useRef<HTMLDivElement>(null);
+
+    // Helper function to get current context ID (projectId takes precedence over sessionId)
+    const getContextId = () => projectId || sessionId;
+
+    // Helper function to migrate localStorage from sessionId to projectId
+    const migrateSessionToProject = (newProjectId: string) => {
+        const oldContextId = sessionId;
+        const newContextId = newProjectId;
+
+        // Migrate chat history
+        const oldHistory = localStorage.getItem(`ryze-chat-history-${oldContextId}`);
+        if (oldHistory) {
+            localStorage.setItem(`ryze-chat-history-${newContextId}`, oldHistory);
+            localStorage.removeItem(`ryze-chat-history-${oldContextId}`);
+        }
+
+        // Migrate generated code
+        const oldCode = localStorage.getItem(`ryze-generated-code-${oldContextId}`);
+        if (oldCode) {
+            localStorage.setItem(`ryze-generated-code-${newContextId}`, oldCode);
+            localStorage.removeItem(`ryze-generated-code-${oldContextId}`);
+        }
+
+        // Migrate project name
+        const oldName = localStorage.getItem(`ryze-project-name-${oldContextId}`);
+        if (oldName) {
+            localStorage.setItem(`ryze-project-name-${newContextId}`, oldName);
+            localStorage.removeItem(`ryze-project-name-${oldContextId}`);
+        }
+    };
 
     // Load project from history if projectId is in URL
     useEffect(() => {
         const loadProjectId = searchParams.get('project');
+        const promptParam = searchParams.get('prompt');
+
+        // If there's a prompt but no project, this is a NEW session - clear old data and generate new session ID
+        if (promptParam && !loadProjectId) {
+            // Generate a new session ID for this fresh session
+            const newSessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            setSessionId(newSessionId);
+            sessionStorage.setItem('ryze-current-session-id', newSessionId);
+
+            // Clear ONLY global localStorage keys (not project-specific ones)
+            localStorage.removeItem('ryze-chat-history');
+            localStorage.removeItem('ryze-generated-code');
+            localStorage.removeItem('ryze-project-name');
+
+            // Reset to initial state
+            setMessages([{ role: 'ai', content: 'Hello! I\'m Ryze. Describe the UI you want to build and I\'ll generate production-ready React + Tailwind CSS code. Try saying "Create a landing page" or "Build a dashboard".' }]);
+            setGeneratedCode('');
+            setEditableCode('');
+            setProjectName('Untitled Project');
+            setProjectId('');
+            setAllGeneratedFiles({});
+            setPlanData(null);
+            setPlanQuestions([]);
+            return;
+        }
+
         if (loadProjectId) {
             fetchProjects().then((projects) => {
                 const project = projects.find((p) => p.id === loadProjectId);
@@ -290,16 +578,198 @@ function StudioContent() {
                     setEditableCode(project.code);
                     setProjectId(project.id);
                     setActiveTab('preview');
-                    setMessages((m) => [...m, {
-                        role: 'ai',
-                        content: `Loaded project: **${project.title}**. You can preview it, edit the code, or ask me to modify it.`,
-                    }]);
+
+                    // Load project-specific conversation history from localStorage
+                    const projectHistoryKey = `ryze-chat-history-${project.id}`;
+                    const savedMessages = localStorage.getItem(projectHistoryKey);
+
+                    if (savedMessages) {
+                        try {
+                            const parsed = JSON.parse(savedMessages);
+                            if (Array.isArray(parsed) && parsed.length > 1) {
+                                setMessages(parsed);
+                            } else {
+                                // Fallback to default message with project loaded notice
+                                setMessages([
+                                    { role: 'ai', content: 'Hello! I\'m Ryze. Describe the UI you want to build and I\'ll generate production-ready React + Tailwind CSS code. Try saying "Create a landing page" or "Build a dashboard".' },
+                                    {
+                                        role: 'ai',
+                                        content: `Loaded project: **${project.title}**. You can preview it, edit the code, or ask me to modify it.`,
+                                    }
+                                ]);
+                            }
+                        } catch (e) {
+                            // Invalid JSON, use default
+                            setMessages([
+                                { role: 'ai', content: 'Hello! I\'m Ryze. Describe the UI you want to build and I\'ll generate production-ready React + Tailwind CSS code. Try saying "Create a landing page" or "Build a dashboard".' },
+                                {
+                                    role: 'ai',
+                                    content: `Loaded project: **${project.title}**. You can preview it, edit the code, or ask me to modify it.`,
+                                }
+                            ]);
+                        }
+                    } else {
+                        setMessages([
+                            { role: 'ai', content: 'Hello! I\'m Ryze. Describe the UI you want to build and I\'ll generate production-ready React + Tailwind CSS code. Try saying "Create a landing page" or "Build a dashboard".' },
+                            {
+                                role: 'ai',
+                                content: `Loaded project: **${project.title}**. You can preview it, edit the code, or ask me to modify it.`,
+                            }
+                        ]);
+                    }
                 }
             }).catch(() => {
                 // Failed to load project
             });
         }
     }, [searchParams]);
+
+    // Load chat history from localStorage on mount (only if not a new session and no project loaded)
+    useEffect(() => {
+        const promptParam = searchParams.get('prompt');
+        const loadProjectId = searchParams.get('project');
+
+        // Skip loading if this is a new session or if a project was already loaded
+        if (promptParam && !loadProjectId) {
+            return;
+        }
+
+        // Skip if a project is already loaded (handled by previous effect)
+        if (loadProjectId) {
+            return;
+        }
+
+        // Try to load from context-specific localStorage for continuing sessions
+        const contextId = getContextId();
+        const savedMessages = localStorage.getItem(`ryze-chat-history-${contextId}`);
+        const savedCode = localStorage.getItem(`ryze-generated-code-${contextId}`);
+        const savedProjectName = localStorage.getItem(`ryze-project-name-${contextId}`);
+
+        if (savedMessages) {
+            try {
+                const parsed = JSON.parse(savedMessages);
+                if (Array.isArray(parsed) && parsed.length > 1) {
+                    setMessages(parsed);
+                }
+            } catch (e) {
+                // Invalid JSON in localStorage
+            }
+        }
+
+        if (savedCode) {
+            setGeneratedCode(savedCode);
+            setEditableCode(savedCode);
+        }
+
+        // Restore multi-file project files
+        const savedAllFiles = localStorage.getItem(`ryze-all-files-${contextId}`);
+        if (savedAllFiles) {
+            try {
+                const parsed = JSON.parse(savedAllFiles);
+                if (typeof parsed === 'object' && parsed !== null) {
+                    setAllGeneratedFiles(parsed);
+                }
+            } catch {
+                // Invalid JSON
+            }
+        }
+
+        if (savedProjectName) {
+            setProjectName(savedProjectName);
+        }
+    }, []);
+
+    // Save chat history to localStorage whenever messages change (project-scoped)
+    useEffect(() => {
+        if (messages.length > 1) { // Don't save if only welcome message
+            const contextId = getContextId();
+
+            // Save only essential message data to reduce storage
+            const essentialMessages = messages.map(m => ({
+                role: m.role,
+                content: m.content,
+                // Omit large/temporary fields
+            }));
+            try {
+                localStorage.setItem(`ryze-chat-history-${contextId}`, JSON.stringify(essentialMessages));
+            } catch (e) {
+                // Storage quota exceeded - archive old data
+                console.warn('localStorage quota exceeded, archiving...');
+                const timestamp = new Date().toISOString();
+                const archiveKey = `ryze-chat-archive-${timestamp}`;
+                localStorage.setItem(archiveKey, JSON.stringify({ messages: essentialMessages, timestamp, contextId }));
+                const archives = JSON.parse(localStorage.getItem('ryze-chat-archives-list') || '[]');
+                archives.push({ key: archiveKey, timestamp, projectName: projectName || 'Auto-archived', contextId });
+                localStorage.setItem('ryze-chat-archives-list', JSON.stringify(archives));
+                // Clear current to make space
+                localStorage.removeItem(`ryze-chat-history-${contextId}`);
+            }
+        }
+    }, [messages, projectId, sessionId, projectName]);
+
+    // Save generated code to localStorage (project-scoped)
+    useEffect(() => {
+        if (generatedCode) {
+            const contextId = getContextId();
+            localStorage.setItem(`ryze-generated-code-${contextId}`, generatedCode);
+        }
+    }, [generatedCode, projectId, sessionId]);
+
+    // Save all generated files to localStorage (project-scoped) for multi-file projects
+    useEffect(() => {
+        if (Object.keys(allGeneratedFiles).length > 0) {
+            const contextId = getContextId();
+            try {
+                localStorage.setItem(`ryze-all-files-${contextId}`, JSON.stringify(allGeneratedFiles));
+            } catch {
+                // Storage quota exceeded — skip
+            }
+        }
+    }, [allGeneratedFiles, projectId, sessionId]);
+
+    // Save project name to localStorage (project-scoped)
+    useEffect(() => {
+        if (projectName !== 'Untitled Project') {
+            const contextId = getContextId();
+            localStorage.setItem(`ryze-project-name-${contextId}`, projectName);
+        }
+    }, [projectName, projectId, sessionId]);
+
+    // Load prompt and mode from Dashboard
+    useEffect(() => {
+        const promptParam = searchParams.get('prompt');
+        const modeParam = searchParams.get('mode');
+        const webSearchParam = searchParams.get('webSearch');
+
+        if (modeParam === 'plan' || modeParam === 'build') {
+            setChatMode(modeParam === 'plan' ? 'plan' : 'chat');
+        }
+
+        if (webSearchParam === 'true') {
+            setWebSearchEnabled(true);
+        }
+
+        if (promptParam && !initialPromptSentRef.current) {
+            setInput(promptParam);
+            initialPromptSentRef.current = true;
+        }
+    }, [searchParams]);
+
+    // Auto-send the initial prompt from Dashboard
+    useEffect(() => {
+        const promptParam = searchParams.get('prompt');
+        if (promptParam && input === promptParam && !generating && initialPromptSentRef.current) {
+            // Trigger send after a small delay to ensure state is settled
+            const timer = setTimeout(() => {
+                if (input.trim()) {
+                    handleSendRef.current?.(input);
+                    // Clear URL params so reload doesn't re-send the prompt
+                    router.replace('/studio', { scroll: false });
+                }
+            }, 100);
+            return () => clearTimeout(timer);
+        }
+    }, [input, generating, searchParams, router]);
 
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -308,6 +778,36 @@ function StudioContent() {
     useEffect(() => {
         setEditableCode(generatedCode);
     }, [generatedCode]);
+
+    // Close route search dropdown on outside click
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (routeSearchRef.current && !routeSearchRef.current.contains(e.target as Node)) {
+                setRouteSearchOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    // Listen for errors from preview iframe — set error state but don't auto-open modal
+    useEffect(() => {
+        const handleMessage = (event: MessageEvent) => {
+            if (event.data?.type === 'preview-error') {
+                const error = event.data.error;
+                setPreviewError(error);
+                // Don't auto-open modal — show subtle error badge instead
+            }
+        };
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+    }, []);
+
+    // Clear error when code changes
+    useEffect(() => {
+        setPreviewError(null);
+        setErrorModalOpen(false);
+    }, [generatedCode, previewRoute]);
 
     // Track code changes for diff view
     useEffect(() => {
@@ -322,15 +822,24 @@ function StudioContent() {
         if (!prompt.trim() || generating) return;
         setInput('');
 
+        // Check if this is a new session from dashboard (has prompt param but no project param)
+        const promptParam = searchParams.get('prompt');
+        const loadProjectId = searchParams.get('project');
+        const isNewSession = promptParam && !loadProjectId;
+
         // Determine the orchestration mode
-        const mode = chatMode === 'plan' ? 'plan' : 'chat';
-        const isGenerateRequest = chatMode === 'chat' && (
+        // Plan mode → use plan_interactive for question-based flow
+        const mode = chatMode === 'plan' ? 'plan_interactive' : 'chat';
+
+        // For new sessions, default to 'generate' mode for production-ready code
+        // Otherwise check for generate keywords
+        const isGenerateRequest = isNewSession || (chatMode === 'chat' && (
             prompt.toLowerCase().includes('build') ||
             prompt.toLowerCase().includes('generate') ||
             prompt.toLowerCase().includes('create') ||
             prompt.toLowerCase().includes('make') ||
             prompt.toLowerCase().includes('design')
-        );
+        ));
         const orchestrationMode = isGenerateRequest ? 'generate' : mode;
 
         // Add user message
@@ -371,10 +880,13 @@ function StudioContent() {
         }
 
         // Build conversation history from messages
-        const conversationHistory = messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-        }));
+        // For new sessions, only include the welcome message to ensure fresh start
+        const conversationHistory = isNewSession
+            ? [{ role: 'ai' as const, content: 'Hello! I\'m Ryze. Describe the UI you want to build and I\'ll generate production-ready React + Tailwind CSS code. Try saying "Create a landing page" or "Build a dashboard".' }]
+            : messages.map((m) => ({
+                role: m.role,
+                content: m.content,
+            }));
 
         // Add a placeholder AI message for streaming tokens
         const streamMsgIndex = { current: -1 };
@@ -384,6 +896,11 @@ function StudioContent() {
         });
 
         try {
+            // Pass existing code context so the AI can reason about modifications
+            const existingCodeContext = generatedCode || (Object.keys(allGeneratedFiles).length > 0
+                ? JSON.stringify(allGeneratedFiles)
+                : undefined);
+
             await streamChat({
                 prompt,
                 mode: orchestrationMode,
@@ -391,6 +908,7 @@ function StudioContent() {
                 model: selectedModel.id,
                 conversationHistory,
                 webSearchContext,
+                existingCode: existingCodeContext,
                 signal: abortController.signal,
 
                 onStep: (step) => {
@@ -410,10 +928,43 @@ function StudioContent() {
                     });
                 },
 
+                onQuestions: (questionsData) => {
+                    const questions: PlanQuestion[] = (questionsData.questions || []).map((q: any) => ({
+                        id: q.id,
+                        question: q.question,
+                        options: [...q.options, ''], // 4th slot for custom input
+                    }));
+                    setPlanQuestions(questions);
+                    setIsAnsweringQuestions(true);
+                    // Replace the thinking placeholder with the questions message
+                    setMessages((m) => {
+                        const updated = [...m];
+                        const idx = streamMsgIndex.current;
+                        if (idx >= 0 && idx < updated.length) {
+                            updated[idx] = {
+                                ...updated[idx],
+                                content: 'I have a few questions to create the best plan for you:',
+                                isThinking: false,
+                                isPlanQuestions: true,
+                                questions,
+                            };
+                        }
+                        return updated;
+                    });
+                },
+
+                onPlanReady: (plan) => {
+                    setPlanData(plan);
+                    setMessages((m) => [...m, {
+                        role: 'ai',
+                        content: '',
+                        isPlanReady: true,
+                        plan,
+                    }]);
+                },
+
                 onCode: (code) => {
                     const codeStr = typeof code === 'string' ? code : JSON.stringify(code, null, 2);
-
-                    const isUpdate = !!generatedCode;
 
                     // Track previous code for diff view
                     if (generatedCode && !previousCode) {
@@ -424,42 +975,64 @@ function StudioContent() {
 
                     setGeneratedCode(codeStr);
                     setActiveTab('preview');
+                    // Commit message will be added in onDone when we know full file count
+                },
 
-                    // Add commit-type message showing file changes
-                    const fileTree = buildFileTree(codeStr);
-                    const flatFiles: { name: string; path: string; status: 'added' | 'modified' }[] = [];
-                    const walkFiles = (files: GeneratedFile[]) => {
-                        files.forEach(f => {
-                            if (f.type === 'file') {
-                                flatFiles.push({
-                                    name: f.name,
-                                    path: f.path,
-                                    status: isUpdate ? 'modified' : 'added',
-                                });
+                onInstall: (statuses) => {
+                    setImplementationStatus((prev) => prev ? { ...prev, installingLibraries: statuses, phase: 'installing' } : null);
+                },
+
+                onFileUpdate: (statuses) => {
+                    setImplementationStatus((prev) => prev ? { ...prev, fileUpdates: statuses, phase: 'creating' } : null);
+                    // Store completed files and show latest in preview
+                    const completedFiles = statuses.filter((s: any) => s.status === 'completed' && s.code);
+                    if (completedFiles.length > 0) {
+                        const newFiles: Record<string, string> = {};
+                        completedFiles.forEach((f: any) => { newFiles[f.path] = f.code; });
+                        setAllGeneratedFiles((prev) => ({ ...prev, ...newFiles }));
+                        const latestFile = completedFiles[completedFiles.length - 1];
+                        setCurrentPreviewFile(latestFile.code);
+                        setActiveTab('preview');
+                    }
+                },
+
+                onTodo: (todos) => {
+                    setImplementationStatus((prev) => prev ? { ...prev, todos } : null);
+                },
+
+                onCommand: (result) => {
+                    // Display command execution result in the thinking steps
+                    const commandOutput = `$ ${result.command}\n${result.formatted || result.stdout || result.error || ''}`;
+                    setThinkingSteps((s) => [...s, commandOutput]);
+
+                    // Also append to the streaming message for visibility
+                    if (result.formatted) {
+                        streamingMessageRef.current += `\n\n\`\`\`bash\n${result.formatted}\n\`\`\`\n`;
+                        const currentText = streamingMessageRef.current;
+                        setMessages((m) => {
+                            const updated = [...m];
+                            const idx = streamMsgIndex.current;
+                            if (idx >= 0 && idx < updated.length) {
+                                updated[idx] = { ...updated[idx], content: currentText };
                             }
-                            if (f.children) walkFiles(f.children);
+                            return updated;
                         });
-                    };
-                    walkFiles(fileTree);
+                    }
+                },
 
-                    setMessages((m) => [...m, {
-                        role: 'ai',
-                        content: isUpdate ? `Updated ${flatFiles.length} files` : `Generated ${flatFiles.length} files`,
-                        isCommit: true,
-                        files: flatFiles,
-                    }]);
-
-                    // Save or update the project
-                    if (projectId) {
-                        updateProject(projectId, { code_json: codeStr, description: prompt }).catch(() => {});
-                    } else {
-                        createProject(prompt, {
-                            code: codeStr,
-                            provider: selectedModel.provider,
-                            model: selectedModel.id,
-                        }).then((project) => {
-                            setProjectId(project.id);
-                        }).catch(() => {});
+                onLogAnalysis: (analysis) => {
+                    // Display log analysis in the streaming message
+                    if (analysis.analysis) {
+                        streamingMessageRef.current += `\n\n### 📊 Log Analysis\n\n${analysis.analysis}\n`;
+                        const currentText = streamingMessageRef.current;
+                        setMessages((m) => {
+                            const updated = [...m];
+                            const idx = streamMsgIndex.current;
+                            if (idx >= 0 && idx < updated.length) {
+                                updated[idx] = { ...updated[idx], content: currentText };
+                            }
+                            return updated;
+                        });
                     }
                 },
 
@@ -471,6 +1044,7 @@ function StudioContent() {
                     // Append completion info for generate mode
                     if (orchestrationMode === 'generate' && meta?.success) {
                         const retries = meta.retries || 0;
+                        const fileCount = meta.file_count || (meta.all_files ? Object.keys(meta.all_files).length : 1);
                         let suffix = `\n\nGenerated production-ready code using **${selectedModel.name}**`;
                         if (retries > 0) suffix += ` (fixed after ${retries} retries)`;
                         suffix += '. Check the Preview tab to see it live.';
@@ -485,6 +1059,65 @@ function StudioContent() {
                             }
                             return updated;
                         });
+
+                        // Handle multi-file project structure
+                        const allFiles: Record<string, string> = meta.all_files || {};
+                        if (Object.keys(allFiles).length > 0) {
+                            setAllGeneratedFiles((prev) => ({ ...prev, ...allFiles }));
+                        }
+
+                        // Add commit-type message showing file changes
+                        const isUpdate = !!generatedCode && generatedCode !== (typeof meta.all_files === 'object' ? '' : generatedCode);
+                        const filesForTree = Object.keys(allFiles).length > 0 ? allFiles : undefined;
+                        const codeForSave = generatedCode || '';
+                        const fileTree = buildFileTree(codeForSave, filesForTree);
+                        const flatFiles: { name: string; path: string; status: 'added' | 'modified' }[] = [];
+                        const walkFiles = (files: GeneratedFile[]) => {
+                            files.forEach(f => {
+                                if (f.type === 'file') {
+                                    flatFiles.push({
+                                        name: f.name,
+                                        path: f.path,
+                                        status: isUpdate ? 'modified' : 'added',
+                                    });
+                                }
+                                if (f.children) walkFiles(f.children);
+                            });
+                        };
+                        walkFiles(fileTree);
+
+                        setMessages((m) => [...m, {
+                            role: 'ai',
+                            content: `Generated ${flatFiles.length} files`,
+                            isCommit: true,
+                            files: flatFiles,
+                        }]);
+
+                        // Save or update the project
+                        const saveCode = Object.keys(allFiles).length > 0
+                            ? JSON.stringify(allFiles)
+                            : codeForSave;
+                        if (projectId) {
+                            updateProject(projectId, { code_json: saveCode, description: prompt }).catch(() => { });
+                        } else {
+                            createProject(prompt, {
+                                code: saveCode,
+                                provider: selectedModel.provider,
+                                model: selectedModel.id,
+                            }).then((project) => {
+                                migrateSessionToProject(project.id);
+                                setProjectId(project.id);
+                            }).catch(() => { });
+                        }
+                    }
+
+                    // Handle plan_implement completion
+                    if (meta?.mode === 'plan_implement' && meta?.success) {
+                        setIsImplementing(false);
+                        setImplementationStatus((prev) => prev ? { ...prev, phase: 'done' } : null);
+                        if (meta.all_files) {
+                            setAllGeneratedFiles((prev) => ({ ...prev, ...meta.all_files }));
+                        }
                     }
                 },
             });
@@ -511,6 +1144,293 @@ function StudioContent() {
             setThinkingOpen(false);
             setSearchingWeb(false);
             abortControllerRef.current = null;
+        }
+    };
+
+    // Set the handleSend ref for auto-sending from Dashboard
+    useEffect(() => {
+        handleSendRef.current = handleSend;
+    }, [handleSend]);
+
+    // Handle submitting answers to plan questions
+    const handleSubmitAnswers = async () => {
+        if (!planQuestions.length) return;
+
+        // Build answers from selected options
+        const answers = planQuestions.map((q) => {
+            let answer = '';
+            if (q.selectedOption !== undefined && q.selectedOption < 3) {
+                answer = q.options[q.selectedOption];
+            } else if (q.customAnswer) {
+                answer = q.customAnswer;
+            } else {
+                answer = q.options[0]; // default to first option
+            }
+            return { question: q.question, answer };
+        });
+
+        setIsAnsweringQuestions(false);
+
+        // Add a message showing the user's answers
+        const answersText = answers.map((a) => `**${a.question}**\n→ ${a.answer}`).join('\n\n');
+        setMessages((m) => [...m, {
+            role: 'user',
+            content: answersText,
+        }]);
+
+        // Get the original prompt from the first user message
+        const originalPrompt = messages.find((m) => m.role === 'user')?.content?.replace('[Plan] ', '') || '';
+
+        setGenerating(true);
+        setThinkingSteps([]);
+        setThinkingOpen(true);
+
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+
+        const streamMsgIndex = { current: -1 };
+        setMessages((m) => {
+            streamMsgIndex.current = m.length;
+            return [...m, { role: 'ai' as const, content: '', isThinking: true }];
+        });
+
+        try {
+            await streamChat({
+                prompt: originalPrompt,
+                mode: 'plan_interactive',
+                provider: selectedModel.provider,
+                model: selectedModel.id,
+                planAnswers: answers,
+                signal: abortController.signal,
+
+                onStep: (step) => {
+                    setThinkingSteps((s) => [...s, step]);
+                },
+
+                onToken: (token) => {
+                    streamingMessageRef.current += token;
+                    const currentText = streamingMessageRef.current;
+                    setMessages((m) => {
+                        const updated = [...m];
+                        const idx = streamMsgIndex.current;
+                        if (idx >= 0 && idx < updated.length) {
+                            updated[idx] = { ...updated[idx], content: currentText, isThinking: false };
+                        }
+                        return updated;
+                    });
+                },
+
+                onPlanReady: (plan) => {
+                    setPlanData(plan);
+                    // Replace thinking with plan-ready message
+                    setMessages((m) => {
+                        const updated = [...m];
+                        const idx = streamMsgIndex.current;
+                        if (idx >= 0 && idx < updated.length) {
+                            updated[idx] = {
+                                ...updated[idx],
+                                content: '',
+                                isThinking: false,
+                                isPlanReady: true,
+                                plan,
+                            };
+                        }
+                        return updated;
+                    });
+                },
+
+                onCommand: (result) => {
+                    const commandOutput = `$ ${result.command}\n${result.formatted || result.stdout || result.error || ''}`;
+                    setThinkingSteps((s) => [...s, commandOutput]);
+                },
+
+                onLogAnalysis: (analysis) => {
+                    if (analysis.analysis) {
+                        streamingMessageRef.current += `\n\n### 📊 Log Analysis\n\n${analysis.analysis}\n`;
+                        const currentText = streamingMessageRef.current;
+                        setMessages((m) => {
+                            const updated = [...m];
+                            const idx = streamMsgIndex.current;
+                            if (idx >= 0 && idx < updated.length) {
+                                updated[idx] = { ...updated[idx], content: currentText };
+                            }
+                            return updated;
+                        });
+                    }
+                },
+
+                onError: (error) => {
+                    toast.error("AI Error", { description: error });
+                },
+
+                onDone: () => { },
+            });
+        } catch (error: unknown) {
+            if ((error as Error).name !== 'AbortError') {
+                toast.error("Plan generation failed");
+            }
+        } finally {
+            setGenerating(false);
+            setThinkingOpen(false);
+        }
+    };
+
+    // Handle implementing the plan
+    const handleImplementPlan = async () => {
+        if (!planData) return;
+
+        // Transition from Plan Mode to Build Mode
+        setChatMode('chat');
+
+        setIsImplementing(true);
+        setGenerating(true);
+        setThinkingSteps([]);
+        setThinkingOpen(true);
+
+        // Initialize implementation status
+        setImplementationStatus({
+            phase: 'installing',
+            todos: planData.steps.map((step, i) => ({
+                id: `step-${i}`,
+                label: step,
+                status: 'pending' as const,
+            })),
+            installingLibraries: planData.libraries.map((lib) => ({
+                name: lib,
+                status: 'pending' as const,
+            })),
+            fileUpdates: planData.files.map((f) => ({
+                path: f.path,
+                name: f.name,
+                status: 'pending' as const,
+            })),
+            currentFileIndex: 0,
+        });
+
+        // Add implementing message
+        setMessages((m) => [...m, {
+            role: 'ai',
+            content: 'Starting implementation...',
+            isImplementing: true,
+        }]);
+
+        const originalPrompt = messages.find((m) => m.role === 'user')?.content?.replace('[Plan] ', '') || '';
+
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+
+        try {
+            await streamChat({
+                prompt: originalPrompt,
+                mode: 'plan_implement',
+                provider: selectedModel.provider,
+                model: selectedModel.id,
+                planData,
+                signal: abortController.signal,
+
+                onStep: (step) => {
+                    setThinkingSteps((s) => [...s, step]);
+                },
+
+                onInstall: (statuses) => {
+                    setImplementationStatus((prev) => prev ? { ...prev, installingLibraries: statuses, phase: 'installing' } : null);
+                },
+
+                onFileUpdate: (statuses) => {
+                    setImplementationStatus((prev) => prev ? { ...prev, fileUpdates: statuses, phase: 'creating' } : null);
+                    const completedFiles = statuses.filter((s: any) => s.status === 'completed' && s.code);
+                    if (completedFiles.length > 0) {
+                        const newFiles: Record<string, string> = {};
+                        completedFiles.forEach((f: any) => { newFiles[f.path] = f.code; });
+                        setAllGeneratedFiles((prev) => ({ ...prev, ...newFiles }));
+                        const latestFile = completedFiles[completedFiles.length - 1];
+                        setCurrentPreviewFile(latestFile.code);
+                        setActiveTab('preview');
+                    }
+                },
+
+                onTodo: (todos) => {
+                    setImplementationStatus((prev) => prev ? { ...prev, todos } : null);
+                },
+
+                onCommand: (result) => {
+                    const commandOutput = `$ ${result.command}\n${result.formatted || result.stdout || result.error || ''}`;
+                    setThinkingSteps((s) => [...s, commandOutput]);
+                },
+
+                onLogAnalysis: (analysis) => {
+                    if (analysis.analysis) {
+                        // Add log analysis as a thinking step for plan_implement
+                        setThinkingSteps((s) => [...s, `📊 Log Analysis: ${analysis.analysis}`]);
+                    }
+                },
+
+                onCode: (code) => {
+                    const codeStr = typeof code === 'string' ? code : JSON.stringify(code, null, 2);
+                    if (generatedCode && previousCode !== generatedCode) {
+                        setPreviousCode(generatedCode);
+                    }
+                    setGeneratedCode(codeStr);
+                    setActiveTab('preview');
+                },
+
+                onError: (error) => {
+                    toast.error("Implementation Error", { description: error });
+                },
+
+                onDone: (meta) => {
+                    setIsImplementing(false);
+                    setImplementationStatus((prev) => prev ? { ...prev, phase: 'done' } : null);
+
+                    if (meta?.success) {
+                        // Store all generated files
+                        const allFiles: Record<string, string> = meta.all_files || {};
+                        if (Object.keys(allFiles).length > 0) {
+                            setAllGeneratedFiles((prev) => ({ ...prev, ...allFiles }));
+                        }
+
+                        // Add commit summary message
+                        const fileList = Object.keys(allFiles).map((path) => ({
+                            name: path.split('/').pop() || path,
+                            path,
+                            status: 'added' as const,
+                        }));
+
+                        setMessages((m) => [...m, {
+                            role: 'ai',
+                            content: `Implementation complete! Created ${meta.files_generated || fileList.length} files`,
+                            isCommit: true,
+                            files: fileList,
+                        }]);
+
+                        // Save project
+                        const mainCode = generatedCode || String(Object.values(allFiles)[0] || '');
+                        if (mainCode) {
+                            if (projectId) {
+                                updateProject(projectId, { code_json: mainCode }).catch(() => { });
+                            } else {
+                                createProject(originalPrompt, {
+                                    code: mainCode,
+                                    provider: selectedModel.provider,
+                                    model: selectedModel.id,
+                                }).then((project) => {
+                                    // Migrate localStorage from sessionId to projectId
+                                    migrateSessionToProject(project.id);
+                                    setProjectId(project.id);
+                                }).catch(() => { });
+                            }
+                        }
+                    }
+                },
+            });
+        } catch (error: unknown) {
+            if ((error as Error).name !== 'AbortError') {
+                toast.error("Implementation failed");
+            }
+        } finally {
+            setGenerating(false);
+            setThinkingOpen(false);
+            setIsImplementing(false);
         }
     };
 
@@ -585,47 +1505,145 @@ function StudioContent() {
         toast.success('Downloaded Component.tsx');
     };
 
+    const handleFixError = () => {
+        if (!previewError) return;
+
+        setErrorModalOpen(false);
+
+        // Extract the specific error (e.g., "Header is not defined")
+        const errorMatch = previewError.message.match(/(\w+) is not defined/);
+        const componentName = errorMatch ? errorMatch[1] : 'component';
+
+        // Create a fix prompt
+        const fixPrompt = `Fix this error in the generated code: "${previewError.message}".
+
+The component "${componentName}" is being used but not defined. Please:
+1. Define the ${componentName} component inline in the same file
+2. Or use lowercase HTML elements instead (e.g., <${componentName.toLowerCase()}> instead of <${componentName} />)
+3. Make sure all custom components are self-contained in a single file
+
+Current error details:
+${previewError.stack || previewError.message}`;
+
+        // Populate the prompt input and trigger send
+        if (handleSendRef.current) {
+            handleSendRef.current(fixPrompt);
+        }
+    };
+
     return (
         <div className="flex flex-col h-full bg-background overflow-hidden font-sans">
             {/* Main Content */}
             <div className="flex-1 flex min-h-0 bg-secondary/10">
                 {/* Chat Panel */}
                 <div className={`${chatCollapsed ? 'w-12' : 'w-[440px]'} border-r border-border flex flex-col min-h-0 bg-background/50 backdrop-blur-sm transition-all duration-300`}>
-                    {/* Chat/Plan toggle */}
-                    <div className="flex items-center gap-2 px-4 h-10 border-b border-border shrink-0">
+                    {/* Header with mode badge */}
+                    <div className="flex items-center justify-between px-4 h-10 border-b border-border shrink-0">
                         {chatCollapsed ? (
-                            <button onClick={() => setChatCollapsed(false)} className="text-muted-foreground hover:text-foreground transition-colors" title="Expand chat">
+                            <button onClick={() => setChatCollapsed(false)} className="text-muted-foreground hover:text-foreground transition-colors mx-auto" title="Expand chat">
                                 <ChevronDown className="h-4 w-4 rotate-90" />
                             </button>
                         ) : (
                             <>
-                                <div className="flex rounded-md bg-secondary/50 p-0.5">
-                                    <button
-                                        onClick={() => setChatMode('chat')}
-                                        className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded transition-all ${chatMode === 'chat' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                                {/* Mode Badge */}
+                                <div className="flex items-center gap-2">
+                                    <motion.div
+                                        key={chatMode}
+                                        initial={{ opacity: 0, scale: 0.9 }}
+                                        animate={{ opacity: 1, scale: 1 }}
+                                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${chatMode === 'plan'
+                                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                            : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                                             }`}
                                     >
-                                        <MessageSquare className="h-3 w-3" /> Chat
+                                        {chatMode === 'plan' ? (
+                                            <Lightbulb className="h-3 w-3" />
+                                        ) : (
+                                            <Rocket className="h-3 w-3" />
+                                        )}
+                                        {chatMode === 'plan' ? 'Plan Mode' : 'Build Mode'}
+                                    </motion.div>
+
+                                    {/* Web Search Badge */}
+                                    {webSearchEnabled && (
+                                        <div className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border bg-blue-500/10 text-blue-400 border-blue-500/20">
+                                            <Globe className="h-3 w-3" />
+                                            Web
+                                        </div>
+                                    )}
+
+                                    {/* Model Badge */}
+                                    <div className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium border bg-white/5 text-muted-foreground border-border/50 max-w-[120px]">
+                                        <Sparkles className="h-3 w-3 shrink-0" />
+                                        <span className="truncate">{selectedModel?.name || 'Model'}</span>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => {
+                                            if (window.confirm('Archive current chat and start new? (Previous chat will be saved)')) {
+                                                const currentContextId = getContextId();
+
+                                                // Archive current conversation
+                                                const timestamp = new Date().toISOString();
+                                                const archiveKey = `ryze-chat-archive-${timestamp}`;
+                                                const archive = {
+                                                    messages,
+                                                    code: generatedCode,
+                                                    projectName,
+                                                    timestamp,
+                                                    contextId: currentContextId,
+                                                };
+                                                localStorage.setItem(archiveKey, JSON.stringify(archive));
+
+                                                // Get list of archives
+                                                const archives = JSON.parse(localStorage.getItem('ryze-chat-archives-list') || '[]');
+                                                archives.push({ key: archiveKey, timestamp, projectName, contextId: currentContextId });
+                                                localStorage.setItem('ryze-chat-archives-list', JSON.stringify(archives));
+
+                                                // Clear project-specific localStorage
+                                                localStorage.removeItem(`ryze-chat-history-${currentContextId}`);
+                                                localStorage.removeItem(`ryze-generated-code-${currentContextId}`);
+                                                localStorage.removeItem(`ryze-project-name-${currentContextId}`);
+
+                                                // Generate new session ID for fresh start
+                                                const newSessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                                                setSessionId(newSessionId);
+                                                setProjectId('');
+
+                                                // Reset current chat
+                                                setMessages([{ role: 'ai', content: 'Hello! I\'m Ryze. Describe the UI you want to build and I\'ll generate production-ready React + Tailwind CSS code. Try saying "Create a landing page" or "Build a dashboard".' }]);
+                                                setGeneratedCode('');
+                                                setEditableCode('');
+                                                setAllGeneratedFiles({});
+                                                setPlanData(null);
+                                                setPlanQuestions([]);
+                                                setProjectName('Untitled Project');
+                                                toast.success('Chat archived! Starting fresh.');
+                                            }
+                                        }}
+                                        className="text-muted-foreground hover:text-foreground transition-colors"
+                                        title="Archive and start new chat"
+                                    >
+                                        <RotateCcw className="h-3.5 w-3.5" />
                                     </button>
                                     <button
-                                        onClick={() => setChatMode('plan')}
-                                        className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded transition-all ${chatMode === 'plan' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                                            }`}
+                                        onClick={() => {
+                                            // Load archives list
+                                            const archives = JSON.parse(localStorage.getItem('ryze-chat-archives-list') || '[]');
+                                            setArchivedChats(archives);
+                                            setHistorySource('archives');
+                                            setArchivesModalOpen(true);
+                                        }}
+                                        className="text-muted-foreground hover:text-foreground transition-colors"
+                                        title="View archived chats"
                                     >
-                                        <Lightbulb className="h-3 w-3" /> Plan
+                                        <FolderOpen className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button onClick={() => setChatCollapsed(true)} className="text-muted-foreground hover:text-foreground transition-colors" title="Collapse chat">
+                                        <ChevronDown className="h-4 w-4 -rotate-90" />
                                     </button>
                                 </div>
-                                <div className="flex-1" />
-                                <button
-                                    onClick={() => setWebSearchEnabled(!webSearchEnabled)}
-                                    className={`px-2 py-1 text-xs rounded transition-all ${webSearchEnabled ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-                                    title="Toggle web search"
-                                >
-                                    <Globe className="h-3 w-3" />
-                                </button>
-                                <button onClick={() => setChatCollapsed(true)} className="text-muted-foreground hover:text-foreground transition-colors" title="Collapse chat">
-                                    <ChevronDown className="h-4 w-4 -rotate-90" />
-                                </button>
                             </>
                         )}
                     </div>
@@ -660,18 +1678,23 @@ function StudioContent() {
                                                                     onClick={() => {
                                                                         setActiveTab('code');
                                                                         setActiveFile(file.path);
-                                                                        const tree = buildFileTree(generatedCode);
-                                                                        const findFile = (files: GeneratedFile[]): string => {
-                                                                            for (const f of files) {
-                                                                                if (f.path === file.path) return f.content;
-                                                                                if (f.children) {
-                                                                                    const found = findFile(f.children);
-                                                                                    if (found) return found;
+                                                                        // Look up content from allGeneratedFiles first, then from file tree
+                                                                        if (allGeneratedFiles[file.path]) {
+                                                                            setViewingFileContent(allGeneratedFiles[file.path]);
+                                                                        } else {
+                                                                            const tree = buildFileTree(generatedCode, Object.keys(allGeneratedFiles).length > 0 ? allGeneratedFiles : undefined);
+                                                                            const findFile = (files: GeneratedFile[]): string => {
+                                                                                for (const f of files) {
+                                                                                    if (f.path === file.path) return f.content;
+                                                                                    if (f.children) {
+                                                                                        const found = findFile(f.children);
+                                                                                        if (found) return found;
+                                                                                    }
                                                                                 }
-                                                                            }
-                                                                            return '';
-                                                                        };
-                                                                        setViewingFileContent(findFile(tree));
+                                                                                return '';
+                                                                            };
+                                                                            setViewingFileContent(findFile(tree));
+                                                                        }
                                                                     }}
                                                                     className="w-full flex items-center gap-2 px-2 py-1 text-[11px] font-mono rounded hover:bg-secondary/50 transition-colors text-left group"
                                                                 >
@@ -685,25 +1708,379 @@ function StudioContent() {
                                                         </div>
                                                     )}
                                                 </div>
-                                            ) : (
-                                            /* Regular message */
-                                            <>
-                                            <div className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 border ${msg.role === 'ai' ? 'bg-primary/5 text-primary border-primary/20' : 'bg-secondary text-foreground border-border'
-                                                }`}>
-                                                {msg.role === 'ai' ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
-                                            </div>
-                                            <div className={`max-w-[85%] rounded-xl px-4 py-2.5 text-sm leading-relaxed ${msg.role === 'user' ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/10' : 'glass border-white/5'
-                                                }`}>
-                                                {msg.isSearching && (
-                                                    <div className="flex items-center gap-1.5 text-xs text-primary mb-2">
-                                                        <Search className="h-3 w-3" /> Web search results
+
+                                            ) : msg.isPlanQuestions ? (
+                                                /* Plan Questions UI */
+                                                <div className="w-full">
+                                                    <div className="flex items-center gap-2 mb-3">
+                                                        <div className="h-7 w-7 rounded-full bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+                                                            <Lightbulb className="h-4 w-4 text-amber-400" />
+                                                        </div>
+                                                        <span className="text-sm font-semibold text-foreground">{msg.content}</span>
                                                     </div>
-                                                )}
-                                                <div className="space-y-2 whitespace-pre-wrap">
-                                                    {msg.content}
+                                                    <div className="space-y-4 ml-2">
+                                                        {(msg.questions || planQuestions).map((q, qIdx) => (
+                                                            <motion.div
+                                                                key={q.id}
+                                                                initial={{ opacity: 0, y: 10 }}
+                                                                animate={{ opacity: 1, y: 0 }}
+                                                                transition={{ delay: qIdx * 0.1 }}
+                                                                className="glass rounded-xl p-3 border border-white/5"
+                                                            >
+                                                                <p className="text-xs font-semibold text-foreground mb-2 flex items-center gap-2">
+                                                                    <Hash className="h-3 w-3 text-amber-400" />
+                                                                    {q.question}
+                                                                </p>
+                                                                <div className="space-y-1.5">
+                                                                    {q.options.slice(0, 3).map((option, optIdx) => (
+                                                                        <button
+                                                                            key={optIdx}
+                                                                            onClick={() => {
+                                                                                setPlanQuestions((prev) =>
+                                                                                    prev.map((pq) =>
+                                                                                        pq.id === q.id
+                                                                                            ? { ...pq, selectedOption: optIdx, customAnswer: undefined }
+                                                                                            : pq
+                                                                                    )
+                                                                                );
+                                                                            }}
+                                                                            className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] text-left transition-all ${planQuestions.find((pq) => pq.id === q.id)?.selectedOption === optIdx
+                                                                                ? 'bg-primary/15 text-primary border border-primary/30 shadow-sm'
+                                                                                : 'bg-secondary/30 text-muted-foreground hover:bg-secondary/60 hover:text-foreground border border-transparent'
+                                                                                }`}
+                                                                        >
+                                                                            <div className={`h-3.5 w-3.5 rounded-full border-2 shrink-0 flex items-center justify-center ${planQuestions.find((pq) => pq.id === q.id)?.selectedOption === optIdx
+                                                                                ? 'border-primary'
+                                                                                : 'border-muted-foreground/30'
+                                                                                }`}>
+                                                                                {planQuestions.find((pq) => pq.id === q.id)?.selectedOption === optIdx && (
+                                                                                    <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                                                                                )}
+                                                                            </div>
+                                                                            {option}
+                                                                        </button>
+                                                                    ))}
+                                                                    {/* Custom input option (4th) */}
+                                                                    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all ${planQuestions.find((pq) => pq.id === q.id)?.selectedOption === 3
+                                                                        ? 'bg-primary/15 border border-primary/30'
+                                                                        : 'bg-secondary/30 border border-transparent'
+                                                                        }`}>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                setPlanQuestions((prev) =>
+                                                                                    prev.map((pq) =>
+                                                                                        pq.id === q.id
+                                                                                            ? { ...pq, selectedOption: 3 }
+                                                                                            : pq
+                                                                                    )
+                                                                                );
+                                                                            }}
+                                                                            className="shrink-0"
+                                                                        >
+                                                                            <div className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${planQuestions.find((pq) => pq.id === q.id)?.selectedOption === 3
+                                                                                ? 'border-primary'
+                                                                                : 'border-muted-foreground/30'
+                                                                                }`}>
+                                                                                {planQuestions.find((pq) => pq.id === q.id)?.selectedOption === 3 && (
+                                                                                    <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                                                                                )}
+                                                                            </div>
+                                                                        </button>
+                                                                        <input
+                                                                            type="text"
+                                                                            placeholder="Your own answer..."
+                                                                            value={planQuestions.find((pq) => pq.id === q.id)?.customAnswer || ''}
+                                                                            onFocus={() => {
+                                                                                setPlanQuestions((prev) =>
+                                                                                    prev.map((pq) =>
+                                                                                        pq.id === q.id
+                                                                                            ? { ...pq, selectedOption: 3 }
+                                                                                            : pq
+                                                                                    )
+                                                                                );
+                                                                            }}
+                                                                            onChange={(e) => {
+                                                                                setPlanQuestions((prev) =>
+                                                                                    prev.map((pq) =>
+                                                                                        pq.id === q.id
+                                                                                            ? { ...pq, customAnswer: e.target.value, selectedOption: 3 }
+                                                                                            : pq
+                                                                                    )
+                                                                                );
+                                                                            }}
+                                                                            className="flex-1 bg-transparent border-0 text-[11px] text-foreground placeholder:text-muted-foreground/50 outline-none"
+                                                                        />
+                                                                    </div>
+                                                                </div>
+                                                            </motion.div>
+                                                        ))}
+                                                    </div>
+                                                    {isAnsweringQuestions && (
+                                                        <motion.button
+                                                            initial={{ opacity: 0, y: 5 }}
+                                                            animate={{ opacity: 1, y: 0 }}
+                                                            transition={{ delay: 0.3 }}
+                                                            onClick={handleSubmitAnswers}
+                                                            disabled={generating}
+                                                            className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
+                                                        >
+                                                            <Sparkles className="h-4 w-4" />
+                                                            Generate Plan
+                                                        </motion.button>
+                                                    )}
                                                 </div>
-                                            </div>
-                                            </>
+
+                                            ) : msg.isPlanReady && msg.plan ? (
+                                                /* Plan Display with Implement Button */
+                                                <div className="w-full">
+                                                    <div className="glass rounded-xl border border-primary/20 overflow-hidden">
+                                                        {/* Plan Header */}
+                                                        <div className="px-4 py-3 border-b border-white/5 bg-primary/5">
+                                                            <div className="flex items-center gap-2">
+                                                                <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center border border-primary/20">
+                                                                    <ListTodo className="h-4 w-4 text-primary" />
+                                                                </div>
+                                                                <div>
+                                                                    <h3 className="text-sm font-bold text-foreground">{msg.plan.title}</h3>
+                                                                    <p className="text-[10px] text-muted-foreground">{msg.plan.description}</p>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Files List */}
+                                                        <div className="px-4 py-3 border-b border-white/5">
+                                                            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Files to create</p>
+                                                            <div className="space-y-1">
+                                                                {msg.plan.files.map((file, fIdx) => (
+                                                                    <motion.div
+                                                                        key={file.path}
+                                                                        initial={{ opacity: 0, x: -10 }}
+                                                                        animate={{ opacity: 1, x: 0 }}
+                                                                        transition={{ delay: fIdx * 0.05 }}
+                                                                        className="flex items-center gap-2 px-2 py-1 rounded-md text-[11px] font-mono bg-secondary/20"
+                                                                    >
+                                                                        <FileCode className={`h-3 w-3 shrink-0 ${file.name.endsWith('.tsx') || file.name.endsWith('.ts') ? 'text-blue-400' : file.name.endsWith('.css') ? 'text-pink-400' : 'text-muted-foreground'}`} />
+                                                                        <span className="text-foreground">{file.path}</span>
+                                                                        <span className="text-muted-foreground/50 ml-auto text-[9px] truncate max-w-[120px]">{file.description}</span>
+                                                                    </motion.div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Skills */}
+                                                        {msg.plan.skills && msg.plan.skills.length > 0 && (
+                                                            <div className="px-4 py-3 border-b border-white/5">
+                                                                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">AI Skills</p>
+                                                                <div className="flex flex-wrap gap-1.5">
+                                                                    {msg.plan.skills.map((skill) => (
+                                                                        <span key={skill.id} className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium bg-primary/10 text-primary border border-primary/20">
+                                                                            <Sparkles className="h-2.5 w-2.5" />
+                                                                            {skill.name}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
+
+                                                        {/* Steps */}
+                                                        <div className="px-4 py-3 border-b border-white/5">
+                                                            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Implementation Steps</p>
+                                                            <div className="space-y-1.5">
+                                                                {msg.plan.steps.map((step, sIdx) => (
+                                                                    <div key={sIdx} className="flex items-start gap-2 text-[11px]">
+                                                                        <span className="h-4 w-4 rounded-full bg-secondary/50 flex items-center justify-center shrink-0 text-[9px] font-bold text-muted-foreground mt-0.5">
+                                                                            {sIdx + 1}
+                                                                        </span>
+                                                                        <span className="text-muted-foreground">{step}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Libraries */}
+                                                        {msg.plan.libraries && msg.plan.libraries.length > 0 && (
+                                                            <div className="px-4 py-3 border-b border-white/5">
+                                                                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Dependencies</p>
+                                                                <div className="flex flex-wrap gap-1.5">
+                                                                    {msg.plan.libraries.map((lib) => (
+                                                                        <span key={lib} className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono bg-secondary/40 text-muted-foreground border border-white/5">
+                                                                            <Package className="h-2.5 w-2.5" />
+                                                                            {lib}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
+
+                                                        {/* Implement Button */}
+                                                        <div className="px-4 py-3">
+                                                            <button
+                                                                onClick={handleImplementPlan}
+                                                                disabled={isImplementing || generating}
+                                                                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-primary to-primary/80 text-primary-foreground text-sm font-bold hover:shadow-lg hover:shadow-primary/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            >
+                                                                {isImplementing ? (
+                                                                    <>
+                                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                                        Implementing...
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <Rocket className="h-4 w-4" />
+                                                                        Implement Plan
+                                                                    </>
+                                                                )}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                            ) : msg.isImplementing ? (
+                                                /* Implementation Status */
+                                                <div className="w-full">
+                                                    {implementationStatus && (
+                                                        <div className="glass rounded-xl border border-primary/10 overflow-hidden">
+                                                            {/* Implementation Header */}
+                                                            <div className="px-4 py-2.5 border-b border-white/5 bg-primary/5 flex items-center gap-2">
+                                                                {implementationStatus.phase === 'done' ? (
+                                                                    <CheckCircle className="h-4 w-4 text-success" />
+                                                                ) : (
+                                                                    <Loader2 className="h-4 w-4 text-primary animate-spin" />
+                                                                )}
+                                                                <span className="text-xs font-semibold text-foreground">
+                                                                    {implementationStatus.phase === 'installing' ? 'Installing dependencies...' :
+                                                                        implementationStatus.phase === 'creating' ? 'Creating files...' :
+                                                                            'Implementation complete!'}
+                                                                </span>
+                                                            </div>
+
+                                                            {/* Todo List */}
+                                                            {implementationStatus.todos.length > 0 && (
+                                                                <div className="px-4 py-2.5 border-b border-white/5">
+                                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Progress</p>
+                                                                    <div className="space-y-1">
+                                                                        {implementationStatus.todos.map((todo) => (
+                                                                            <div key={todo.id} className="flex items-center gap-2 text-[11px]">
+                                                                                {todo.status === 'completed' ? (
+                                                                                    <CircleCheck className="h-3.5 w-3.5 text-success shrink-0" />
+                                                                                ) : todo.status === 'in_progress' ? (
+                                                                                    <Loader2 className="h-3.5 w-3.5 text-primary animate-spin shrink-0" />
+                                                                                ) : (
+                                                                                    <CircleDot className="h-3.5 w-3.5 text-muted-foreground/30 shrink-0" />
+                                                                                )}
+                                                                                <span className={todo.status === 'completed' ? 'text-success/80 line-through' : todo.status === 'in_progress' ? 'text-primary font-medium' : 'text-muted-foreground'}>
+                                                                                    {todo.label}
+                                                                                </span>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+
+                                                            {/* Library Installation */}
+                                                            {implementationStatus.installingLibraries.length > 0 && (
+                                                                <div className="px-4 py-2.5 border-b border-white/5">
+                                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2 flex items-center gap-1.5">
+                                                                        <Terminal className="h-3 w-3" />
+                                                                        Dependencies
+                                                                    </p>
+                                                                    <div className="space-y-1">
+                                                                        {implementationStatus.installingLibraries.map((lib) => (
+                                                                            <div key={lib.name} className="flex items-center gap-2 text-[11px] font-mono">
+                                                                                {lib.status === 'installed' ? (
+                                                                                    <Check className="h-3 w-3 text-success shrink-0" />
+                                                                                ) : lib.status === 'installing' ? (
+                                                                                    <Loader2 className="h-3 w-3 text-amber-400 animate-spin shrink-0" />
+                                                                                ) : (
+                                                                                    <Package className="h-3 w-3 text-muted-foreground/30 shrink-0" />
+                                                                                )}
+                                                                                <span className={lib.status === 'installed' ? 'text-success/80' : lib.status === 'installing' ? 'text-amber-400' : 'text-muted-foreground/50'}>
+                                                                                    {lib.name}
+                                                                                </span>
+                                                                                {lib.status === 'installing' && (
+                                                                                    <motion.div
+                                                                                        className="ml-auto h-1 w-12 bg-secondary/50 rounded-full overflow-hidden"
+                                                                                        initial={{ opacity: 0 }}
+                                                                                        animate={{ opacity: 1 }}
+                                                                                    >
+                                                                                        <motion.div
+                                                                                            className="h-full bg-amber-400 rounded-full"
+                                                                                            initial={{ width: '0%' }}
+                                                                                            animate={{ width: '100%' }}
+                                                                                            transition={{ duration: 0.5 }}
+                                                                                        />
+                                                                                    </motion.div>
+                                                                                )}
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+
+                                                            {/* File Updates */}
+                                                            {implementationStatus.fileUpdates.length > 0 && (
+                                                                <div className="px-4 py-2.5">
+                                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2 flex items-center gap-1.5">
+                                                                        <FolderOpen className="h-3 w-3" />
+                                                                        Files
+                                                                    </p>
+                                                                    <div className="space-y-1">
+                                                                        {implementationStatus.fileUpdates.map((file) => (
+                                                                            <div key={file.path} className="flex items-center gap-2 text-[11px] font-mono">
+                                                                                {file.status === 'completed' ? (
+                                                                                    <Check className="h-3 w-3 text-success shrink-0" />
+                                                                                ) : file.status === 'writing' ? (
+                                                                                    <Loader2 className="h-3 w-3 text-blue-400 animate-spin shrink-0" />
+                                                                                ) : (
+                                                                                    <FileCode className="h-3 w-3 text-muted-foreground/30 shrink-0" />
+                                                                                )}
+                                                                                <span className={file.status === 'completed' ? 'text-foreground' : file.status === 'writing' ? 'text-blue-400' : 'text-muted-foreground/50'}>
+                                                                                    {file.path}
+                                                                                </span>
+                                                                                {file.status === 'writing' && (
+                                                                                    <motion.div
+                                                                                        className="ml-auto flex gap-0.5"
+                                                                                        initial={{ opacity: 0 }}
+                                                                                        animate={{ opacity: 1 }}
+                                                                                    >
+                                                                                        {[0, 1, 2].map((dotI) => (
+                                                                                            <motion.span
+                                                                                                key={dotI}
+                                                                                                className="h-1 w-1 rounded-full bg-blue-400"
+                                                                                                animate={{ opacity: [0.3, 1, 0.3] }}
+                                                                                                transition={{ repeat: Infinity, duration: 0.8, delay: dotI * 0.2 }}
+                                                                                            />
+                                                                                        ))}
+                                                                                    </motion.div>
+                                                                                )}
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                            ) : (
+                                                /* Regular message */
+                                                <>
+                                                    <div className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 border ${msg.role === 'ai' ? 'bg-primary/5 text-primary border-primary/20' : 'bg-secondary text-foreground border-border'
+                                                        }`}>
+                                                        {msg.role === 'ai' ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
+                                                    </div>
+                                                    <div className={`max-w-[85%] rounded-xl px-4 py-2.5 text-sm leading-relaxed ${msg.role === 'user' ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/10' : 'glass border-white/5'
+                                                        }`}>
+                                                        {msg.isSearching && (
+                                                            <div className="flex items-center gap-1.5 text-xs text-primary mb-2">
+                                                                <Search className="h-3 w-3" /> Web search results
+                                                            </div>
+                                                        )}
+                                                        <div className="space-y-2 whitespace-pre-wrap">
+                                                            {msg.content}
+                                                        </div>
+                                                    </div>
+                                                </>
                                             )}
                                         </motion.div>
                                     ))}
@@ -765,9 +2142,17 @@ function StudioContent() {
                             {/* Input */}
                             <div className="p-3 border-t border-border bg-background">
                                 <PromptBox
-                                    onSend={(msg) => handleSend(msg)}
+                                    onSend={(msg, mode, options) => {
+                                        if (mode === 'plan') setChatMode('plan');
+                                        else setChatMode('chat');
+                                        if (options?.webSearch !== undefined) setWebSearchEnabled(options.webSearch);
+                                        handleSend(msg);
+                                    }}
+                                    onModeChange={(mode) => setChatMode(mode === 'plan' ? 'plan' : 'chat')}
+                                    onWebSearchChange={(enabled) => setWebSearchEnabled(enabled)}
                                     placeholder={chatMode === 'plan' ? 'Ask for architectural advice...' : 'Describe what you want to build...'}
                                     className="bg-secondary/30 border-border/50"
+                                    showModelSelector={true}
                                 />
 
                                 {/* Chat Options: Plan Mode or Name Chat */}
@@ -826,7 +2211,7 @@ function StudioContent() {
                                 )}
 
                                 <p className="text-[9px] text-muted-foreground mt-2 text-center uppercase tracking-widest font-semibold opacity-60">
-                                    {chatMode === 'plan' ? 'Plan mode active' : 'React + Tailwind CSS'}
+                                    {chatMode === 'plan' ? 'Plan mode' : 'Build mode'} · {selectedModel?.name || 'AI'}{webSearchEnabled ? ' · Web search on' : ''}
                                 </p>
                             </div>
                         </>
@@ -837,7 +2222,7 @@ function StudioContent() {
                 <div className="flex-1 flex flex-col min-w-0">
                     {/* Tabs + toolbar */}
                     <div className="flex items-center justify-between px-4 h-10 border-b border-border shrink-0 bg-background/50">
-                        <div className="flex gap-1">
+                        <div className="flex items-center gap-1">
                             {([
                                 { key: 'preview' as const, icon: Eye, label: 'Preview' },
                                 { key: 'code' as const, icon: Code2, label: 'Code' },
@@ -848,12 +2233,117 @@ function StudioContent() {
                                     onClick={() => !disabled && setActiveTab(key)}
                                     disabled={disabled}
                                     title={disabled ? 'Code comparison not available yet' : undefined}
-                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${disabled ? 'opacity-40 cursor-not-allowed' : activeTab === key ? 'bg-primary/10 text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
+                                    className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${disabled ? 'opacity-40 cursor-not-allowed' : activeTab === key ? 'bg-primary/10 text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
                                         }`}
                                 >
                                     <Icon className="h-3 w-3" /> {label}
+                                    {key === 'preview' && previewError && (
+                                        <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-destructive animate-pulse" title="Preview has errors" />
+                                    )}
                                 </button>
                             ))}
+
+                            {/* Route search + reload + open in new tab (visible on preview tab) */}
+                            {activeTab === 'preview' && (generatedCode || Object.keys(allGeneratedFiles).length > 0) && (
+                                <>
+                                    <div className="h-4 w-px bg-border mx-1.5" />
+                                    <div ref={routeSearchRef} className="relative">
+                                        <button
+                                            onClick={() => setRouteSearchOpen(!routeSearchOpen)}
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-mono rounded-md bg-secondary/40 text-muted-foreground hover:text-foreground hover:bg-secondary/70 transition-all border border-border/50 min-w-[160px] max-w-[280px]"
+                                        >
+                                            <Search className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+                                            <span className="truncate">
+                                                {previewRoute
+                                                    ? `/${previewRoute}`
+                                                    : Object.keys(allGeneratedFiles).length > 0
+                                                        ? `/${Object.keys(allGeneratedFiles)[0] || ''}`
+                                                        : '/index'}
+                                            </span>
+                                            <ChevronDown className={`h-3 w-3 shrink-0 ml-auto transition-transform ${routeSearchOpen ? 'rotate-180' : ''}`} />
+                                        </button>
+                                        {routeSearchOpen && (
+                                            <div className="absolute top-full left-0 mt-1 w-72 bg-background border border-border rounded-lg shadow-xl z-50 overflow-hidden">
+                                                <div className="p-2 border-b border-border">
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Search routes..."
+                                                        value={routeSearchQuery}
+                                                        onChange={(e) => setRouteSearchQuery(e.target.value)}
+                                                        className="w-full px-2.5 py-1.5 text-[11px] font-mono bg-secondary/30 border border-border/50 rounded-md outline-none focus:border-primary/50 text-foreground placeholder:text-muted-foreground/50"
+                                                        autoFocus
+                                                    />
+                                                </div>
+                                                <div className="max-h-48 overflow-y-auto py-1">
+                                                    {/* Default main preview */}
+                                                    {generatedCode && (
+                                                        <button
+                                                            onClick={() => {
+                                                                setPreviewRoute('');
+                                                                setRouteSearchOpen(false);
+                                                                setRouteSearchQuery('');
+                                                            }}
+                                                            className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-mono hover:bg-secondary/50 transition-colors text-left ${!previewRoute ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}
+                                                        >
+                                                            <Eye className="h-3 w-3 shrink-0" />
+                                                            <span>/index (main)</span>
+                                                        </button>
+                                                    )}
+                                                    {/* Generated file routes */}
+                                                    {Object.keys(allGeneratedFiles)
+                                                        .filter(path => path.toLowerCase().includes(routeSearchQuery.toLowerCase()))
+                                                        .map((path) => (
+                                                            <button
+                                                                key={path}
+                                                                onClick={() => {
+                                                                    setPreviewRoute(path);
+                                                                    setRouteSearchOpen(false);
+                                                                    setRouteSearchQuery('');
+                                                                    setIframeKey(k => k + 1);
+                                                                }}
+                                                                className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-mono hover:bg-secondary/50 transition-colors text-left ${previewRoute === path ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}
+                                                            >
+                                                                <FileCode className={`h-3 w-3 shrink-0 ${path.endsWith('.tsx') || path.endsWith('.ts') ? 'text-blue-400' : path.endsWith('.css') ? 'text-pink-400' : 'text-muted-foreground'}`} />
+                                                                <span className="truncate">/{path}</span>
+                                                            </button>
+                                                        ))}
+                                                    {Object.keys(allGeneratedFiles).filter(p => p.toLowerCase().includes(routeSearchQuery.toLowerCase())).length === 0 && !generatedCode && (
+                                                        <p className="px-3 py-2 text-[11px] text-muted-foreground/50 text-center">No routes found</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 rounded-md"
+                                        onClick={() => setIframeKey(k => k + 1)}
+                                        title="Reload preview"
+                                    >
+                                        <RotateCcw className="h-3.5 w-3.5" />
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 rounded-md"
+                                        onClick={() => {
+                                            const previewCode = previewRoute && allGeneratedFiles[previewRoute]
+                                                ? allGeneratedFiles[previewRoute]
+                                                : generatedCode;
+                                            if (previewCode) {
+                                                const html = buildPreviewHtml(previewCode, allGeneratedFiles);
+                                                const blob = new Blob([html], { type: 'text/html' });
+                                                const url = URL.createObjectURL(blob);
+                                                window.open(url, '_blank');
+                                            }
+                                        }}
+                                        title="Open in new tab"
+                                    >
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                    </Button>
+                                </>
+                            )}
                         </div>
                         <div className="flex items-center gap-1.5">
                             <Button variant="ghost" size="icon" className="h-8 w-8 rounded-md" onClick={() => setDevice(device === 'desktop' ? 'mobile' : 'desktop')}>
@@ -889,37 +2379,44 @@ function StudioContent() {
                     <div className="flex-1 p-6 overflow-auto bg-[url('/grid-pattern.svg')] bg-[size:40px_40px] bg-fixed">
                         {activeTab === 'preview' && (
                             <div className={`mx-auto h-full rounded-2xl overflow-hidden shadow-2xl transition-all duration-500 ${device === 'mobile' ? 'max-w-sm' : 'w-full'}`}>
-                                {generatedCode ? (
-                                    <div className="h-full flex flex-col">
-                                        {/* Mock browser chrome */}
-                                        <div className="flex items-center gap-2 px-4 py-2 border-b border-white/5 bg-sidebar/80">
-                                            <div className="flex gap-1.5">
-                                                <span className="h-2.5 w-2.5 rounded-full bg-destructive/60" />
-                                                <span className="h-2.5 w-2.5 rounded-full bg-warning/60" />
-                                                <span className="h-2.5 w-2.5 rounded-full bg-success/60" />
-                                            </div>
-                                            <div className="flex-1 flex justify-center">
-                                                <span className="text-[10px] font-mono text-muted-foreground bg-secondary/80 px-4 py-0.5 rounded-full border border-border/40">ryzecanvas.local:3000</span>
-                                            </div>
-                                            <RotateCcw
-                                                className="h-3 w-3 text-muted-foreground hover:text-primary transition-colors cursor-pointer"
-                                                onClick={() => {
-                                                    // Force iframe reload by toggling code
-                                                    const temp = generatedCode;
-                                                    setGeneratedCode('');
-                                                    setTimeout(() => setGeneratedCode(temp), 50);
-                                                }}
-                                            />
-                                        </div>
-                                        {/* Live preview iframe */}
-                                        <div className="flex-1 overflow-hidden bg-white">
-                                            <iframe
-                                                srcDoc={buildPreviewHtml(generatedCode)}
-                                                className="w-full h-full border-0 outline-none block"
-                                                sandbox="allow-scripts"
-                                                title="Live Preview"
-                                            />
-                                        </div>
+                                {(generatedCode || (previewRoute && allGeneratedFiles[previewRoute])) ? (
+                                    <div className="h-full overflow-hidden bg-white rounded-2xl flex flex-col">
+                                        {/* Subtle error banner — click to see details or fix */}
+                                        {previewError && (
+                                            <button
+                                                onClick={() => setErrorModalOpen(true)}
+                                                className="flex items-center gap-2 px-3 py-1.5 bg-destructive/10 border-b border-destructive/20 text-destructive text-xs font-medium hover:bg-destructive/15 transition-colors shrink-0 w-full text-left"
+                                            >
+                                                <AlertTriangle className="h-3 w-3 shrink-0" />
+                                                <span className="truncate">{previewError.message}</span>
+                                                <span className="ml-auto text-[10px] text-destructive/60 shrink-0">Click to fix</span>
+                                            </button>
+                                        )}
+                                        <iframe
+                                            key={iframeKey}
+                                            srcDoc={buildPreviewHtml(
+                                                previewRoute && allGeneratedFiles[previewRoute]
+                                                    ? allGeneratedFiles[previewRoute]
+                                                    : generatedCode,
+                                                allGeneratedFiles
+                                            )}
+                                            className="w-full flex-1 border-0 outline-none block"
+                                            sandbox="allow-scripts allow-same-origin"
+                                            title="Live Preview"
+                                        />
+                                    </div>
+                                ) : isImplementing && currentPreviewFile ? (
+                                    /* Live code preview during implementation */
+                                    <div className="h-full overflow-auto bg-[#0d1117] rounded-2xl p-4">
+                                        <pre className="text-[11px] font-mono text-green-400/90 leading-relaxed whitespace-pre-wrap">
+                                            <motion.span
+                                                initial={{ opacity: 0 }}
+                                                animate={{ opacity: 1 }}
+                                                key={currentPreviewFile.slice(0, 50)}
+                                            >
+                                                {currentPreviewFile}
+                                            </motion.span>
+                                        </pre>
                                     </div>
                                 ) : (
                                     <div className="h-full flex items-center justify-center animate-fade-in">
@@ -937,14 +2434,14 @@ function StudioContent() {
                         {activeTab === 'code' && (
                             <div className="glass-strong rounded-2xl overflow-hidden h-full flex shadow-2xl border-white/5">
                                 {/* File Tree Sidebar */}
-                                {generatedCode && (
+                                {(generatedCode || Object.keys(allGeneratedFiles).length > 0) && (
                                     <div className="w-52 shrink-0 border-r border-white/5 bg-sidebar/60 overflow-y-auto py-2">
                                         <div className="flex items-center gap-1.5 px-3 py-1.5 mb-1">
                                             <FolderTree className="h-3.5 w-3.5 text-primary" />
                                             <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Explorer</span>
                                         </div>
                                         <FileTreeView
-                                            files={buildFileTree(generatedCode)}
+                                            files={buildFileTree(generatedCode, Object.keys(allGeneratedFiles).length > 0 ? allGeneratedFiles : undefined)}
                                             activeFile={activeFile}
                                             onSelect={(file) => {
                                                 setActiveFile(file.path);
@@ -971,9 +2468,10 @@ function StudioContent() {
                                             />
                                         ) : (
                                             <pre className="p-6 text-sm font-mono text-[hsl(var(--neon-text))] whitespace-pre-wrap leading-relaxed selection:bg-primary/30">
-                                                {activeFile === 'src/components/Generated.tsx'
-                                                    ? (generatedCode || '// Your generated React + Tailwind code will appear here...\n// Try: "Create a pricing page with three tiers"\n// Or: "Build a dashboard with sidebar navigation"')
-                                                    : (viewingFileContent || '// Select a file from the tree to view its contents')
+                                                {viewingFileContent
+                                                    || allGeneratedFiles[activeFile]
+                                                    || (activeFile === 'src/components/Generated.tsx' ? generatedCode : '')
+                                                    || '// Select a file from the tree to view its contents'
                                                 }
                                             </pre>
                                         )}
@@ -983,21 +2481,39 @@ function StudioContent() {
                         )}
                         {activeTab === 'diff' && previousCode && (
                             <div className="w-full h-full flex flex-col">
-                                <CodeComparison
-                                    beforeCode={previousCode}
-                                    afterCode={generatedCode}
-                                    language="typescript"
-                                    filename="Generated.tsx"
-                                    beforeLabel="Before"
-                                    afterLabel="After"
-                                />
+                                {/* File routes navigation */}
+                                {Object.keys(allGeneratedFiles).length > 0 && (
+                                    <div className="flex items-center justify-center gap-1 py-2 px-4 bg-background/80 border-b border-white/5 rounded-t-2xl flex-wrap">
+                                        {Object.keys(allGeneratedFiles).map((path) => (
+                                            <button
+                                                key={path}
+                                                onClick={() => setDiffFile(path)}
+                                                className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono rounded-md transition-all ${diffFile === path
+                                                    ? 'bg-primary/15 text-primary border border-primary/30'
+                                                    : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50 border border-transparent'
+                                                    }`}
+                                            >
+                                                <FileCode className={`h-3 w-3 shrink-0 ${path.endsWith('.tsx') || path.endsWith('.ts') ? 'text-blue-400' : path.endsWith('.css') ? 'text-pink-400' : path.endsWith('.json') ? 'text-yellow-400' : 'text-muted-foreground'}`} />
+                                                {path.split('/').pop()}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="flex-1">
+                                    <CodeComparison
+                                        beforeCode={diffFile ? (previousAllFiles[diffFile] || '') : previousCode}
+                                        afterCode={diffFile ? (allGeneratedFiles[diffFile] || '') : generatedCode}
+                                        language="typescript"
+                                        filename={diffFile ? (diffFile.split('/').pop() || 'file') : 'Generated.tsx'}
+                                        beforeLabel="Before"
+                                        afterLabel="After"
+                                    />
+                                </div>
                             </div>
                         )}
                     </div>
                 </div>
             </div>
-
-            {/* GitHub Connection Modal */}
             <AnimatePresence>
                 {githubModal && (
                     <motion.div
@@ -1048,6 +2564,217 @@ function StudioContent() {
                                 <p className="text-[11px] leading-relaxed text-muted-foreground">
                                     <strong className="text-primary">Note:</strong> RyzeCanvas requires write access to create commits and manage pull requests on your behalf.
                                 </p>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+
+                {/* Error Modal */}
+                {errorModalOpen && previewError && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[100] flex items-center justify-center bg-background/60 backdrop-blur-md px-4"
+                        onClick={() => setErrorModalOpen(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            exit={{ scale: 0.95, opacity: 0, y: 20 }}
+                            className="glass-strong rounded-2xl p-8 w-full max-w-2xl shadow-2xl border-destructive/20"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="flex items-start gap-4 mb-6">
+                                <div className="h-12 w-12 rounded-xl bg-destructive/10 flex items-center justify-center border border-destructive/20 shrink-0">
+                                    <AlertTriangle className="h-6 w-6 text-destructive" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h3 className="text-lg font-bold text-foreground">Preview Error Detected</h3>
+                                    <p className="text-xs text-muted-foreground mt-1">The AI-generated code has a runtime error that needs to be fixed.</p>
+                                </div>
+                            </div>
+
+                            <div className="space-y-4">
+                                {/* Error Message */}
+                                <div className="glass rounded-xl p-4 border border-destructive/20 bg-destructive/5">
+                                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Error Message</p>
+                                    <p className="text-sm font-mono text-destructive break-words">{previewError.message}</p>
+                                </div>
+
+                                {/* Stack Trace (if available) */}
+                                {previewError.stack && (
+                                    <div className="glass rounded-xl p-4 border border-border/50 bg-secondary/10 max-h-48 overflow-auto">
+                                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Stack Trace</p>
+                                        <pre className="text-[10px] font-mono text-muted-foreground whitespace-pre-wrap break-words">{previewError.stack}</pre>
+                                    </div>
+                                )}
+
+                                {/* Action Buttons */}
+                                <div className="flex gap-3 pt-2">
+                                    <Button
+                                        variant="default"
+                                        className="flex-1 bg-destructive hover:bg-destructive/90 text-destructive-foreground shadow-lg shadow-destructive/20"
+                                        onClick={handleFixError}
+                                    >
+                                        <Sparkles className="mr-2 h-4 w-4" />
+                                        Fix Error with AI
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => setErrorModalOpen(false)}
+                                    >
+                                        Close
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <div className="mt-6 p-4 rounded-xl bg-amber-500/5 border border-amber-500/20">
+                                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                                    <strong className="text-amber-500">Tip:</strong> The AI will analyze the error and regenerate the code with the fix applied. You can also manually edit the code in the Code tab.
+                                </p>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+
+                {/* Archives Modal */}
+                {archivesModalOpen && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[100] flex items-center justify-center bg-background/60 backdrop-blur-md px-4"
+                        onClick={() => setArchivesModalOpen(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            exit={{ scale: 0.95, opacity: 0, y: 20 }}
+                            className="glass-strong rounded-2xl p-8 w-full max-w-2xl shadow-2xl border-primary/10 max-h-[80vh] flex flex-col"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="flex items-start gap-4 mb-6">
+                                <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/20 shrink-0">
+                                    {historySource === 'projects' ? (
+                                        <Clock className="h-6 w-6 text-primary" />
+                                    ) : (
+                                        <FolderOpen className="h-6 w-6 text-primary" />
+                                    )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h3 className="text-lg font-bold text-foreground">
+                                        {historySource === 'projects' ? 'Project History' : 'Archived Conversations'}
+                                    </h3>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        {historySource === 'projects' ? 'Load a previous project' : 'Restore a previous chat session'}
+                                    </p>
+                                </div>
+                            </div>
+
+                            {archivedChats.length === 0 ? (
+                                <div className="flex-1 flex items-center justify-center py-12">
+                                    <div className="text-center">
+                                        {historySource === 'projects' ? (
+                                            <Clock className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
+                                        ) : (
+                                            <FolderOpen className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
+                                        )}
+                                        <p className="text-sm text-muted-foreground">
+                                            {historySource === 'projects' ? 'No projects yet' : 'No archived chats yet'}
+                                        </p>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex-1 overflow-auto space-y-2">
+                                    {archivedChats.map((archive, idx) => (
+                                        <div
+                                            key={archive.key}
+                                            className="glass rounded-xl p-4 border border-border/50 hover:border-primary/50 transition-all group"
+                                        >
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-semibold text-foreground truncate">
+                                                        {archive.projectName || 'Untitled Project'}
+                                                    </p>
+                                                    <p className="text-xs text-muted-foreground mt-1">
+                                                        {new Date(archive.timestamp).toLocaleString()}
+                                                    </p>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => {
+                                                            // Check if it's a localStorage archive or database project
+                                                            const archived = localStorage.getItem(archive.key);
+                                                            if (archived) {
+                                                                // localStorage archive
+                                                                const data = JSON.parse(archived);
+                                                                setMessages(data.messages || []);
+                                                                setGeneratedCode(data.code || '');
+                                                                setEditableCode(data.code || '');
+                                                                setProjectName(data.projectName || 'Untitled Project');
+                                                            } else if (archive.code) {
+                                                                // Database project
+                                                                setGeneratedCode(archive.code);
+                                                                setEditableCode(archive.code);
+                                                                setProjectName(archive.projectName || 'Untitled Project');
+                                                                setProjectId(archive.key);
+                                                                setActiveTab('preview');
+                                                                setMessages([
+                                                                    { role: 'ai', content: 'Hello! I\'m Ryze. Describe the UI you want to build and I\'ll generate production-ready React + Tailwind CSS code. Try saying "Create a landing page" or "Build a dashboard".' },
+                                                                    { role: 'user', content: archive.prompt || 'Previous project' },
+                                                                    { role: 'ai', content: `Loaded project: **${archive.projectName}**. You can preview it, edit the code, or ask me to modify it.` }
+                                                                ]);
+                                                            }
+                                                            setArchivesModalOpen(false);
+                                                            toast.success('Project loaded!');
+                                                        }}
+                                                        className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    >
+                                                        <ArrowRight className="h-4 w-4 mr-1" />
+                                                        {archive.code ? 'Load' : 'Restore'}
+                                                    </Button>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => {
+                                                            if (window.confirm('Delete this item?')) {
+                                                                if (localStorage.getItem(archive.key)) {
+                                                                    // localStorage archive
+                                                                    localStorage.removeItem(archive.key);
+                                                                    const updatedList = archivedChats.filter(a => a.key !== archive.key);
+                                                                    setArchivedChats(updatedList);
+                                                                    localStorage.setItem('ryze-chat-archives-list', JSON.stringify(updatedList));
+                                                                    toast.success('Archive deleted');
+                                                                } else {
+                                                                    // Database project - just remove from view
+                                                                    const updatedList = archivedChats.filter(a => a.key !== archive.key);
+                                                                    setArchivedChats(updatedList);
+                                                                    toast.info('Removed from history view');
+                                                                }
+                                                            }
+                                                        }}
+                                                        className="opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive"
+                                                    >
+                                                        <X className="h-4 w-4" />
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            <div className="flex gap-3 pt-4 mt-4 border-t border-border/50">
+                                <Button
+                                    variant="outline"
+                                    className="flex-1"
+                                    onClick={() => setArchivesModalOpen(false)}
+                                >
+                                    Close
+                                </Button>
                             </div>
                         </motion.div>
                     </motion.div>

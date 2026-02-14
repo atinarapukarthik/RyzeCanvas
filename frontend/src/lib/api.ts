@@ -295,6 +295,33 @@ export async function pushToGithub(projectId: string, repoName: string, descript
 
 // ---- AI Agent / Web Search ----
 
+export interface AIModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+  description?: string;
+}
+
+export interface AIProviderInfo {
+  id: string;
+  name: string;
+  configured: boolean;
+  icon: string;
+}
+
+export interface ModelsResponse {
+  providers: AIProviderInfo[];
+  models: AIModelInfo[];
+  default_provider: string;
+}
+
+export async function fetchAvailableModels(): Promise<ModelsResponse> {
+  const res = await fetch(`${API_BASE_URL}/agent/models`, {
+    headers: getHeaders(),
+  });
+  return handleResponse<ModelsResponse>(res);
+}
+
 export async function searchWeb(query: string): Promise<{ success: boolean; query: string; results: any }> {
   const res = await fetch(`${API_BASE_URL}/agent/web-search?query=${encodeURIComponent(query)}`, {
     headers: getHeaders(),
@@ -305,23 +332,33 @@ export async function searchWeb(query: string): Promise<{ success: boolean; quer
 // ---- Streaming Chat (SSE) ----
 
 export interface ChatStreamEvent {
-  event: "step" | "token" | "plan" | "code" | "error" | "done";
+  event: "step" | "token" | "plan" | "code" | "error" | "done" | "questions" | "plan_ready" | "install" | "file_update" | "todo" | "command" | "log_analysis";
   data: any;
 }
 
 export interface ChatStreamOptions {
   prompt: string;
-  mode: "chat" | "plan" | "generate";
+  mode: "chat" | "plan" | "generate" | "plan_interactive" | "plan_implement";
   provider: string;
   model: string;
   conversationHistory?: { role: string; content: string }[];
   webSearchContext?: string;
+  planAnswers?: { question: string; answer: string }[];
+  planData?: Record<string, any>;
+  existingCode?: string;
   onStep?: (step: string) => void;
   onToken?: (token: string) => void;
   onPlan?: (plan: string) => void;
   onCode?: (code: any) => void;
   onError?: (error: string) => void;
   onDone?: (meta: any) => void;
+  onQuestions?: (questions: any) => void;
+  onPlanReady?: (plan: any) => void;
+  onInstall?: (statuses: any) => void;
+  onFileUpdate?: (statuses: any) => void;
+  onTodo?: (todos: any) => void;
+  onCommand?: (result: any) => void;
+  onLogAnalysis?: (analysis: any) => void;
   signal?: AbortSignal;
 }
 
@@ -333,11 +370,14 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
   const {
     prompt, mode, provider, model,
     conversationHistory = [], webSearchContext,
+    planAnswers, planData, existingCode,
     onStep, onToken, onPlan, onCode, onError, onDone,
+    onQuestions, onPlanReady, onInstall, onFileUpdate, onTodo,
+    onCommand, onLogAnalysis,
     signal,
   } = options;
 
-  const payload = {
+  const payload: Record<string, any> = {
     prompt,
     mode,
     provider,
@@ -347,6 +387,9 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
       content: m.content,
     })),
     ...(webSearchContext ? { web_search_context: webSearchContext } : {}),
+    ...(planAnswers ? { plan_answers: planAnswers } : {}),
+    ...(planData ? { plan_data: planData } : {}),
+    ...(existingCode ? { existing_code: existingCode } : {}),
   };
 
   const res = await fetch(`${API_BASE_URL}/chat/stream`, {
@@ -402,6 +445,27 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
             break;
           case "done":
             onDone?.(payload.data);
+            break;
+          case "questions":
+            onQuestions?.(payload.data);
+            break;
+          case "plan_ready":
+            onPlanReady?.(payload.data);
+            break;
+          case "install":
+            onInstall?.(payload.data);
+            break;
+          case "file_update":
+            onFileUpdate?.(payload.data);
+            break;
+          case "todo":
+            onTodo?.(payload.data);
+            break;
+          case "command":
+            onCommand?.(payload.data);
+            break;
+          case "log_analysis":
+            onLogAnalysis?.(payload.data);
             break;
         }
       } catch {

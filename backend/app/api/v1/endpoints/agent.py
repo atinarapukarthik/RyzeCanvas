@@ -24,12 +24,13 @@ router = APIRouter()
 # Request/Response Schemas
 class GenerateUIRequest(BaseModel):
     """Request schema for UI generation."""
-    prompt: str = Field(..., description="Natural language description of the UI", min_length=3)
+    prompt: str = Field(...,
+                        description="Natural language description of the UI", min_length=3)
     context: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Optional context (theme preferences, existing components, etc.)"
     )
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -63,8 +64,9 @@ class GenerateUIResponse(BaseModel):
 class SavePlanRequest(BaseModel):
     """Request schema for saving a generated plan to a project."""
     project_id: int = Field(..., description="ID of the project to update")
-    code_json: Dict[str, Any] = Field(..., description="The generated UI plan to save")
-    
+    code_json: Dict[str, Any] = Field(...,
+                                      description="The generated UI plan to save")
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -110,13 +112,13 @@ async def generate_ui(
       "prompt": "Create a dashboard with user stats and recent activity"
     }
     ```
-    
+
     **Returns:** Structured JSON UI plan with components and layout
     """
     try:
         # Run the LangGraph workflow
         result = await run_agent(request.prompt)
-        
+
         # Check if generation was successful
         if not result.get("success"):
             # Failed after max retries
@@ -129,7 +131,7 @@ async def generate_ui(
                     "hint": "Try simplifying your prompt or being more specific about which components to use"
                 }
             )
-        
+
         # Success - extract the validated code
         code = result["output"]
         retries = result.get("retries", 0)
@@ -144,18 +146,18 @@ async def generate_ui(
             code=code,
             message=message
         )
-    
+
     except HTTPException:
         # Re-raise HTTP exceptions
         raise
-    
+
     except ValueError as e:
         # Validation or parsing errors
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid generation request: {str(e)}"
         )
-    
+
     except Exception as e:
         # Other errors (API key missing, network issues, etc.)
         raise HTTPException(
@@ -172,14 +174,14 @@ async def save_plan(
 ):
     """
     Save a generated UI plan to an existing project.
-    
+
     - **project_id**: ID of the project to update
     - **code_json**: The UI plan to save (from /agent/generate)
-    
+
     **Requires:** Authentication + Project Ownership
-    
+
     **Security:** Only the project owner can save plans to their project.
-    
+
     **Example:**
     ```json
     {
@@ -200,34 +202,34 @@ async def save_plan(
             )
         )
         project = result.scalar_one_or_none()
-        
+
         if not project:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Project not found or you don't have permission to update it"
             )
-        
+
         # Convert dict to JSON string for storage
         code_json_str = json.dumps(request.code_json)
-        
+
         # Update project
         project.code_json = code_json_str
         project.updated_at = datetime.utcnow()
-        
+
         await db.commit()
         await db.refresh(project)
-        
+
         return SavePlanResponse(
             success=True,
             project_id=project.id,
             message=f"UI plan saved to project '{project.title}' successfully",
             updated_at=project.updated_at
         )
-    
+
     except HTTPException:
         # Re-raise HTTP exceptions
         raise
-    
+
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -246,16 +248,16 @@ async def generate_and_save(
 ):
     """
     Convenience endpoint: Generate UI plan and immediately save to project.
-    
+
     Combines /generate and /save in one call.
-    
+
     **Phase 4:** Uses LangGraph orchestration with validation loop.
-    
+
     **Query Parameters:**
     - **prompt**: Natural language UI description
     - **project_id**: ID of project to update
     - **context**: Optional generation context (JSON)
-    
+
     **Example:**
     ```
     POST /agent/generate-and-save?prompt=Create a login screen&project_id=1
@@ -264,7 +266,7 @@ async def generate_and_save(
     try:
         # Step 1: Generate UI plan using LangGraph
         result = await run_agent(prompt)
-        
+
         if not result.get("success"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -274,7 +276,7 @@ async def generate_and_save(
                     "retries": result.get("retries", 0)
                 }
             )
-        
+
         plan = result["output"]
 
         # Step 2: Save to project
@@ -282,12 +284,12 @@ async def generate_and_save(
             project_id=project_id,
             code_json={"code": plan}
         )
-        
+
         return await save_plan(save_request, db, current_user)
-    
+
     except HTTPException:
         raise
-    
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -344,7 +346,7 @@ async def agent_status():
             "max_validation_retries": 3,
             "workflow": "Retrieve → Plan → Generate → Validate (with loop)"
         }
-    
+
     except Exception as e:
         return {
             "status": "error",
@@ -368,6 +370,142 @@ async def list_components():
         "components": ALLOWED_COMPONENTS,
         "count": len(ALLOWED_COMPONENTS),
         "templates": COMPONENT_TEMPLATES
+    }
+
+
+@router.get("/models")
+async def list_available_models():
+    """
+    List available AI models based on configured API keys.
+
+    Checks which providers have valid API keys configured and returns
+    the available models for each. For OpenRouter, fetches the actual
+    model list from their API.
+
+    **Authentication:** Not required (public access)
+    """
+    from app.core.config import settings
+
+    providers = []
+    all_models = []
+
+    # Gemini models
+    if settings.GEMINI_API_KEY:
+        gemini_models = [
+            {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash",
+                "provider": "gemini", "description": "Fast and efficient"},
+            {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro",
+                "provider": "gemini", "description": "Most capable Gemini"},
+            {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash",
+                "provider": "gemini", "description": "Previous generation fast model"},
+        ]
+        providers.append({"id": "gemini", "name": "Google Gemini",
+                         "configured": True, "icon": "sparkles"})
+        all_models.extend(gemini_models)
+
+    # Anthropic/Claude models
+    if settings.ANTHROPIC_API_KEY:
+        claude_models = [
+            {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4",
+                "provider": "claude", "description": "Latest balanced model"},
+            {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet",
+                "provider": "claude", "description": "Fast and intelligent"},
+            {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus",
+                "provider": "claude", "description": "Most capable Claude"},
+        ]
+        providers.append(
+            {"id": "claude", "name": "Anthropic Claude", "configured": True, "icon": "cpu"})
+        all_models.extend(claude_models)
+
+    # OpenAI models
+    if settings.OPENAI_API_KEY:
+        openai_models = [
+            {"id": "gpt-4o", "name": "GPT-4o", "provider": "openai",
+                "description": "Most capable OpenAI model"},
+            {"id": "gpt-4o-mini", "name": "GPT-4o Mini",
+                "provider": "openai", "description": "Fast and affordable"},
+        ]
+        providers.append({"id": "openai", "name": "OpenAI",
+                         "configured": True, "icon": "brain"})
+        all_models.extend(openai_models)
+
+    # OpenRouter models - fetch from API if key is configured
+    if settings.OPENROUTER_API_KEY:
+        openrouter_models = []
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://openrouter.ai/api/v1/models",
+                    headers={
+                        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models_data = data.get("data", [])
+                    # Filter to popular/useful models and limit count
+                    popular_prefixes = [
+                        "anthropic/", "openai/", "google/", "meta-llama/",
+                        "mistralai/", "deepseek/", "qwen/",
+                    ]
+                    for m in models_data:
+                        model_id = m.get("id", "")
+                        if any(model_id.startswith(p) for p in popular_prefixes):
+                            openrouter_models.append({
+                                "id": model_id,
+                                "name": m.get("name", model_id),
+                                "provider": "openrouter",
+                                "description": f"Context: {m.get('context_length', 'N/A')} tokens",
+                            })
+                    # Sort by name and limit to 30
+                    openrouter_models.sort(key=lambda x: x["name"])
+                    openrouter_models = openrouter_models[:30]
+        except Exception:
+            # Fallback to static list if API call fails
+            openrouter_models = [
+                {"id": "anthropic/claude-3.5-sonnet",
+                    "name": "Claude 3.5 Sonnet (via OR)", "provider": "openrouter", "description": "Via OpenRouter"},
+                {"id": "openai/gpt-4o",
+                    "name": "GPT-4o (via OR)", "provider": "openrouter", "description": "Via OpenRouter"},
+                {"id": "google/gemini-2.5-flash-preview",
+                    "name": "Gemini 2.5 Flash (via OR)", "provider": "openrouter", "description": "Via OpenRouter"},
+                {"id": "meta-llama/llama-3-70b-instruct",
+                    "name": "Llama 3 70B (via OR)", "provider": "openrouter", "description": "Via OpenRouter"},
+                {"id": "deepseek/deepseek-chat",
+                    "name": "DeepSeek Chat (via OR)", "provider": "openrouter", "description": "Via OpenRouter"},
+            ]
+
+        if openrouter_models:
+            providers.append(
+                {"id": "openrouter", "name": "OpenRouter", "configured": True, "icon": "globe"})
+            all_models.extend(openrouter_models)
+
+    # Ollama - check if running locally
+    ollama_available = False
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{settings.OLLAMA_BASE_URL}/api/tags")
+            if resp.status_code == 200:
+                ollama_available = True
+                ollama_data = resp.json()
+                ollama_models_list = ollama_data.get("models", [])
+                for m in ollama_models_list:
+                    all_models.append({
+                        "id": m.get("name", ""),
+                        "name": m.get("name", "").split(":")[0].title() + " (Local)",
+                        "provider": "ollama",
+                        "description": "Running locally",
+                    })
+    except Exception:
+        pass
+
+    if ollama_available:
+        providers.append(
+            {"id": "ollama", "name": "Ollama (Local)", "configured": True, "icon": "zap"})
+
+    return {
+        "providers": providers,
+        "models": all_models,
+        "default_provider": settings.AI_MODEL_PROVIDER,
     }
 
 
@@ -466,7 +604,8 @@ async def upload_file(
     Returns file metadata that can be used with the UI generation.
     """
     # Restrict file types
-    allowed_extensions = {'.js', '.jsx', '.ts', '.tsx', '.png', '.jpg', '.jpeg', '.figma'}
+    allowed_extensions = {'.js', '.jsx', '.ts',
+                          '.tsx', '.png', '.jpg', '.jpeg', '.figma'}
 
     # Get file extension
     file_ext = None
@@ -551,7 +690,8 @@ async def transcribe_audio(
         # Call Whisper API
         transcript = await client.audio.transcriptions.create(
             model="whisper-1",
-            file=(audio_file.name, audio_file, audio.content_type or "audio/wav"),
+            file=(audio_file.name, audio_file,
+                  audio.content_type or "audio/wav"),
         )
 
         return {
@@ -568,4 +708,3 @@ async def transcribe_audio(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Transcription failed: {str(e)}"
         )
-

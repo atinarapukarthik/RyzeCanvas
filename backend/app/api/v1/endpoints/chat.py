@@ -25,9 +25,11 @@ class ChatMessageInput(BaseModel):
 class ChatRequestBody(BaseModel):
     """Request body for the chat endpoint."""
     prompt: str = Field(..., min_length=1, description="User's message")
-    mode: str = Field(default="chat", description="Mode: 'chat', 'plan', or 'generate'")
+    mode: str = Field(
+        default="chat", description="Mode: 'chat', 'plan', 'generate', 'plan_interactive', 'plan_implement'")
     provider: str = Field(default="gemini", description="AI provider")
-    model: str = Field(default="gemini-2.5-flash", description="Model identifier")
+    model: str = Field(default="gemini-2.5-flash",
+                       description="Model identifier")
     conversation_history: List[ChatMessageInput] = Field(
         default_factory=list,
         description="Previous messages for context"
@@ -35,6 +37,18 @@ class ChatRequestBody(BaseModel):
     web_search_context: Optional[str] = Field(
         default=None,
         description="Web search results to include as context"
+    )
+    plan_answers: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Answers to plan questions (for plan_interactive mode)"
+    )
+    plan_data: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Structured plan data (for plan_implement mode)"
+    )
+    existing_code: Optional[str] = Field(
+        default=None,
+        description="Existing generated code context for iterative modifications"
     )
 
     class Config:
@@ -74,10 +88,10 @@ async def chat_stream(
 
     **Authentication:** Not required (public access)
     """
-    if body.mode not in ("chat", "plan", "generate"):
+    if body.mode not in ("chat", "plan", "generate", "plan_interactive", "plan_implement"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid mode '{body.mode}'. Must be 'chat', 'plan', or 'generate'.",
+            detail=f"Invalid mode '{body.mode}'. Must be 'chat', 'plan', 'generate', 'plan_interactive', or 'plan_implement'.",
         )
 
     chat_request = ChatRequest(
@@ -90,6 +104,9 @@ async def chat_stream(
             for m in body.conversation_history
         ],
         web_search_context=body.web_search_context,
+        plan_answers=body.plan_answers,
+        plan_data=body.plan_data,
+        existing_code=body.existing_code,
     )
 
     return StreamingResponse(
