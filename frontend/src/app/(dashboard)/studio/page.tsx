@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useRef, useEffect, Suspense, useCallback } from "react";
+import { useState, useRef, useEffect, Suspense, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CodeComparison } from "@/components/ui/code-comparison";
 import { PromptBox } from "@/components/ui/prompt-box";
+import { DynamicRenderer } from "@/components/DynamicRenderer";
 import { useUIStore } from "@/stores/uiStore";
 import { createProject, searchWeb, updateProject, streamChat, fetchProjects } from "@/lib/api";
 import { toast } from "sonner";
@@ -961,6 +962,25 @@ function StudioContent() {
         setErrorModalOpen(false);
     }, [generatedCode, previewRoute]);
 
+    // Detect if the generated code is a UI Plan (JSON)
+    const uiPlan = useMemo(() => {
+        try {
+            let cleanCode = generatedCode.trim();
+            // Remove markdown code blocks if present
+            if (cleanCode.startsWith('```json')) {
+                cleanCode = cleanCode.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+            } else if (cleanCode.startsWith('```')) {
+                cleanCode = cleanCode.replace(/^```\w*\s*/, '').replace(/\s*```$/, '');
+            }
+
+            const parsed = JSON.parse(cleanCode);
+            if (parsed.components && Array.isArray(parsed.components) && parsed.layout) {
+                return parsed;
+            }
+        } catch { }
+        return null;
+    }, [generatedCode]);
+
     // Track code changes for diff view
     useEffect(() => {
         if (generatedCode && previousCode && generatedCode !== previousCode) {
@@ -1192,6 +1212,19 @@ function StudioContent() {
                             return updated;
                         });
                     }
+                },
+
+                onExplanation: (explanation) => {
+                    streamingMessageRef.current += `\n\n### 🎨 Design Explanation\n\n${explanation}`;
+                    const currentText = streamingMessageRef.current;
+                    setMessages((m) => {
+                        const updated = [...m];
+                        const idx = streamMsgIndex.current;
+                        if (idx >= 0 && idx < updated.length) {
+                            updated[idx] = { ...updated[idx], content: currentText };
+                        }
+                        return updated;
+                    });
                 },
 
                 onError: (error) => {
@@ -2490,14 +2523,20 @@ ${previewError.stack || previewError.message}`;
                                         size="icon"
                                         className="h-7 w-7 rounded-md"
                                         onClick={() => {
-                                            const previewCode = previewRoute && allGeneratedFiles[previewRoute]
-                                                ? allGeneratedFiles[previewRoute]
-                                                : generatedCode;
-                                            if (previewCode) {
-                                                const html = buildPreviewHtml(previewCode, allGeneratedFiles);
-                                                const blob = new Blob([html], { type: 'text/html' });
-                                                const url = URL.createObjectURL(blob);
-                                                window.open(url, '_blank');
+                                            if (uiPlan) {
+                                                // Open the dedicated preview page for JSON plans
+                                                const contextId = getContextId();
+                                                window.open(`/preview?contextId=${contextId}`, '_blank');
+                                            } else {
+                                                const previewCode = previewRoute && allGeneratedFiles[previewRoute]
+                                                    ? allGeneratedFiles[previewRoute]
+                                                    : generatedCode;
+                                                if (previewCode) {
+                                                    const html = buildPreviewHtml(previewCode, allGeneratedFiles);
+                                                    const blob = new Blob([html], { type: 'text/html' });
+                                                    const url = URL.createObjectURL(blob);
+                                                    window.open(url, '_blank');
+                                                }
                                             }
                                         }}
                                         title="Open in new tab"
@@ -2541,7 +2580,14 @@ ${previewError.stack || previewError.message}`;
                     <div className="flex-1 p-6 overflow-auto bg-[url('/grid-pattern.svg')] bg-[size:40px_40px] bg-fixed">
                         {activeTab === 'preview' && (
                             <div className={`mx-auto h-full rounded-2xl overflow-hidden shadow-2xl transition-all duration-500 ${device === 'mobile' ? 'max-w-sm' : 'w-full'}`}>
-                                {(generatedCode || (previewRoute && allGeneratedFiles[previewRoute])) ? (
+                                {uiPlan ? (
+                                    <div className="h-full overflow-hidden bg-white rounded-2xl flex flex-col shadow-sm border border-border/50 relative">
+                                        <div className="absolute top-2 right-2 z-10 px-2 py-1 bg-black/80 text-white text-[10px] rounded-full font-mono backdrop-blur-md">
+                                            Deterministic UI
+                                        </div>
+                                        <DynamicRenderer plan={uiPlan} />
+                                    </div>
+                                ) : (generatedCode || (previewRoute && allGeneratedFiles[previewRoute])) ? (
                                     <div className="h-full overflow-hidden bg-white rounded-2xl flex flex-col">
                                         {/* Subtle error banner — click to see details or fix */}
                                         {previewError && (

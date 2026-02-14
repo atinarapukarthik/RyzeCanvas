@@ -51,11 +51,6 @@ export function SignIn({
 		}
 	};
 
-	const handleKeyPress = (e: React.KeyboardEvent) => {
-		if (e.key === "Enter") {
-			handleSignIn();
-		}
-	};
 
 	return (
 		<div className={cn("w-full", className)}>

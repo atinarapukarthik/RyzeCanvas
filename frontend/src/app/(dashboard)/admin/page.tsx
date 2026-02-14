@@ -72,7 +72,8 @@ function UserDialog({ open, onOpenChange, onSuccess, editingUser }: UserDialogPr
         try {
             if (editingUser) {
                 // If editing and password is empty, don't send it
-                const updateData: any = { ...formData };
+                // If editing and password is empty, don't send it
+                const updateData: Partial<typeof formData> = { ...formData };
                 if (!updateData.password) delete updateData.password;
 
                 await adminUpdateUser(editingUser.id, updateData);
@@ -88,8 +89,8 @@ function UserDialog({ open, onOpenChange, onSuccess, editingUser }: UserDialogPr
             }
             onSuccess();
             onOpenChange(false);
-        } catch (error: any) {
-            toast.error(error.message || "Operation failed");
+        } catch (error: unknown) {
+            toast.error((error as Error).message || "Operation failed");
         } finally {
             setLoading(false);
         }

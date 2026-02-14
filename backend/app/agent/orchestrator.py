@@ -28,14 +28,15 @@ from app.agent.system_prompt import (
     get_chat_prompt,
     get_plan_prompt,
     get_generate_plan_prompt,
-    get_generate_code_prompt,
+    get_generate_json_prompt,
+    get_explainer_prompt,
     get_retry_context,
     get_plan_questions_prompt,
     get_plan_from_answers_prompt,
     get_plan_implement_prompt,
 )
 from app.agent.rag import retrieve_context
-from app.core.component_library import ALLOWED_COMPONENTS
+from app.core.component_library import ALLOWED_COMPONENTS, UIPlan
 from app.agent.command_executor import execute_command, format_command_output, CommandResult
 
 
@@ -53,6 +54,7 @@ EVENT_FILE_UPDATE = "file_update"  # File creation/update status
 EVENT_TODO = "todo"          # Implementation todo updates
 EVENT_COMMAND = "command"    # Command execution results
 EVENT_LOG_ANALYSIS = "log_analysis"  # Log analysis and insights
+EVENT_EXPLANATION = "explanation"  # Design explanation
 
 
 @dataclass
@@ -456,6 +458,18 @@ def _extract_json_object(text: str) -> str | None:
     return None
 
 
+def _validate_ui_plan(plan_data: Dict[str, Any]) -> tuple[bool, str]:
+    """
+    Validate the UI Plan JSON against the schema and component library.
+    """
+    try:
+        # Pydantic validation
+        UIPlan(**plan_data)
+        return True, ""
+    except Exception as e:
+        return False, f"Schema Error: {str(e)}"
+
+
 def _validate_code(code: str | dict) -> tuple[bool, str]:
     """
     Validate either:
@@ -631,21 +645,20 @@ async def _handle_generate(llm, request: ChatRequest) -> AsyncGenerator[str, Non
         logger.error(f"Planning failed: {str(e)}")
         yield _sse_event(EVENT_STEP, f"Planning skipped: {_format_llm_error(e)}")
 
-    # ── Step 2: Generate Code + Validate Loop ──
-    logger.info("Generation Step 2: Code Generation & Validation Loop")
+    # ── Step 2: Generate JSON Plan + Validate Loop ──
+    logger.info("Generation Step 2: JSON Plan Generation & Validation Loop")
     errors = []
-    generated_code = None
+    generated_plan = None
 
     for attempt in range(MAX_RETRIES + 1):
         logger.info(f"Generation attempt {attempt + 1}")
         if attempt == 0:
-            yield _sse_event(EVENT_STEP, "Writing React components...")
-            yield _sse_event(EVENT_STEP, "Applying Tailwind CSS styling...")
+            yield _sse_event(EVENT_STEP, "Generating UI components plan...")
         else:
-            yield _sse_event(EVENT_STEP, f"Fixing issues (attempt {attempt + 1})...")
+            yield _sse_event(EVENT_STEP, f"Fixing schema issues (attempt {attempt + 1})...")
 
         # Build generation prompt
-        gen_prompt = get_generate_code_prompt()
+        gen_prompt = get_generate_json_prompt()
 
         if plan:
             gen_prompt += f"\n\n<layout-plan>\n{plan}\n</layout-plan>"
@@ -653,71 +666,89 @@ async def _handle_generate(llm, request: ChatRequest) -> AsyncGenerator[str, Non
         if errors:
             gen_prompt += "\n" + get_retry_context(errors)
 
-        # Build the user message with existing code context
-        if has_existing:
-            user_content = (
-                f"The user has an existing project. Here is their CURRENT code:\n"
-                f"```\n{request.existing_code}\n```\n\n"
-                f"They want to: {request.prompt}\n\n"
-                f"CRITICAL RULES FOR MODIFYING EXISTING CODE:\n"
-                f"1. PRESERVE all files that don't need changes — copy them EXACTLY as-is into your output\n"
-                f"2. Only MODIFY the specific files that need changes for the user's request\n"
-                f"3. Do NOT rewrite or simplify working code — keep the existing quality and features\n"
-                f"4. Do NOT remove features, sections, or styling that already exist unless explicitly asked\n"
-                f"5. When adding new features, integrate them naturally with the existing code\n\n"
-                f"Generate the COMPLETE updated project structure as a JSON object.\n"
-                f"Include ALL files (both modified and unchanged) with file paths as keys and file contents as values.\n"
-                f"Start with {{ immediately. No markdown fences, no explanation."
-            )
-        else:
-            user_content = (
-                f"Generate the complete project structure as a JSON object for: {request.prompt}\n\n"
-                "Output ONLY a valid JSON object with file paths as keys and file contents as values.\n"
-                "Start with { immediately. No markdown fences, no explanation."
-            )
-
         gen_messages = [
             SystemMessage(content=gen_prompt),
-            HumanMessage(content=user_content),
+            HumanMessage(content=f"Generate the UIPlan JSON for: {request.prompt}"),
         ]
 
         try:
-            logger.info("Invoking LLM for code generation")
+            logger.info("Invoking LLM for plan generation")
             gen_response = await llm.ainvoke(gen_messages)
             raw_output = gen_response.content.strip()
-            logger.info("Code generation complete")
+            logger.info("Plan generation complete")
         except Exception as e:
-            logger.error(f"Code generation failed: {str(e)}")
-            yield _sse_event(EVENT_ERROR, f"Code generation failed: {_format_llm_error(e)}")
+            logger.error(f"Plan generation failed: {str(e)}")
+            yield _sse_event(EVENT_ERROR, f"Plan generation failed: {_format_llm_error(e)}")
             yield _sse_event(EVENT_DONE, {"success": False})
             return
 
-        # Clean and parse output
-        yield _sse_event(EVENT_STEP, "Parsing generated files...")
-        generated_code = _clean_code_output(raw_output)
+        # Extract JSON
+        yield _sse_event(EVENT_STEP, "Parsing JSON plan...")
+        
+        # Helper to extract JSON dict
+        from app.agent.graph import _extract_json
+        try:
+            generated_plan = _extract_json(raw_output)
+        except Exception as e:
+             generated_plan = None
+             error = f"JSON Parse Error: {str(e)}"
+             errors.append(error)
+             yield _sse_event(EVENT_STEP, f"Found issue: {error}")
+             continue
 
         # Validate
-        yield _sse_event(EVENT_STEP, "Validating code structure...")
-        is_valid, error = _validate_code(generated_code)
+        yield _sse_event(EVENT_STEP, "Validating against Component Library...")
+        is_valid, error = _validate_ui_plan(generated_plan)
 
         if is_valid:
-            logger.info("Code validation passed")
-            yield _sse_event(EVENT_STEP, "All validations passed!")
-            yield _sse_event(EVENT_STEP, "Preparing preview...")
-            async for event in _emit_generated_code(generated_code, attempt):
+            logger.info("Plan validation passed")
+            yield _sse_event(EVENT_STEP, "Validation passed!")
+            
+            # Emit the code event with the JSON plan (frontend handles it)
+            yield _sse_event(EVENT_CODE, generated_plan)
+            
+            # ── Step 3: Explanation ──
+            yield _sse_event(EVENT_STEP, "Generating explanation...")
+            async for event in _handle_explainer(llm, request.prompt, generated_plan, plan):
                 yield event
+                
+            yield _sse_event(EVENT_DONE, {"success": True, "mode": "generate", "retries": attempt})
             return
         else:
-            logger.warning(f"Code validation failed: {error}")
+            logger.warning(f"Plan validation failed: {error}")
             errors.append(error)
             yield _sse_event(EVENT_STEP, f"Found issue: {error}")
-            yield _sse_event(EVENT_STEP, "Analyzing error and regenerating...")
+            yield _sse_event(EVENT_STEP, "Refining plan...")
 
-    # Max retries exhausted — return whatever we have
-    yield _sse_event(EVENT_STEP, "Returning best effort output...")
-    if generated_code:
-        async for event in _emit_generated_code(generated_code, MAX_RETRIES):
-            yield event
+    # Max retries exhausted
+    yield _sse_event(EVENT_ERROR, "Failed to generate valid plan after retries.")
+    yield _sse_event(EVENT_DONE, {"success": False})
+
+
+async def _handle_explainer(llm, user_request: str, ui_plan: Dict[str, Any], initial_plan: str) -> AsyncGenerator[str, None]:
+    """
+    Generate and stream the explanation for the UI.
+    """
+    system_prompt = get_explainer_prompt()
+    
+    components = ui_plan.get("components", [])
+    comp_summary = ", ".join([c.get("type", "Unknown") for c in components])
+    plan_summary = f"Components: {comp_summary}. Layout: {ui_plan.get('layout', {}).get('theme', 'default')}"
+    
+    formatted_prompt = system_prompt.replace("{user_request}", user_request).replace("{plan_summary}", plan_summary)
+    
+    messages = [
+        SystemMessage(content=formatted_prompt),
+        HumanMessage(content="Explain this design.")
+    ]
+    
+    try:
+        response = await llm.ainvoke(messages)
+        explanation = response.content.strip()
+        yield _sse_event(EVENT_EXPLANATION, explanation)
+    except Exception as e:
+        logger.error(f"Explanation failed: {e}")
+        yield _sse_event(EVENT_STEP, "Could not generate explanation.")
 
 
 async def _emit_generated_code(

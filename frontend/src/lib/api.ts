@@ -332,7 +332,7 @@ export async function searchWeb(query: string): Promise<{ success: boolean; quer
 // ---- Streaming Chat (SSE) ----
 
 export interface ChatStreamEvent {
-  event: "step" | "token" | "plan" | "code" | "error" | "done" | "questions" | "plan_ready" | "install" | "file_update" | "todo" | "command" | "log_analysis";
+  event: "step" | "token" | "plan" | "code" | "error" | "done" | "questions" | "plan_ready" | "install" | "file_update" | "todo" | "command" | "log_analysis" | "explanation";
   data: any;
 }
 
@@ -359,6 +359,7 @@ export interface ChatStreamOptions {
   onTodo?: (todos: any) => void;
   onCommand?: (result: any) => void;
   onLogAnalysis?: (analysis: any) => void;
+  onExplanation?: (explanation: string) => void;
   signal?: AbortSignal;
 }
 
@@ -373,7 +374,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
     planAnswers, planData, existingCode,
     onStep, onToken, onPlan, onCode, onError, onDone,
     onQuestions, onPlanReady, onInstall, onFileUpdate, onTodo,
-    onCommand, onLogAnalysis,
+    onCommand, onLogAnalysis, onExplanation,
     signal,
   } = options;
 
@@ -466,6 +467,9 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
             break;
           case "log_analysis":
             onLogAnalysis?.(payload.data);
+            break;
+          case "explanation":
+            onExplanation?.(payload.data);
             break;
         }
       } catch {

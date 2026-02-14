@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight, Sparkles } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useRef } from "react";
 import { Scene } from "@/components/ui/neon-raymarcher";
 
@@ -48,7 +48,7 @@ function CodeWindow() {
         >
             {/* Glass Background */}
             <div className="absolute -inset-4 bg-white/5 rounded-[2.5rem] blur-2xl opacity-50" />
-            
+
             <div className="relative rounded-2xl border border-white/10 bg-black/40 backdrop-blur-2xl overflow-hidden shadow-[0_0_50px_-12px_rgba(0,0,0,0.5)]">
                 {/* Window chrome */}
                 <div className="flex items-center gap-2 px-5 py-3.5 border-b border-white/5 bg-white/5 backdrop-blur-md">

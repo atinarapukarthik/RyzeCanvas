@@ -105,367 +105,115 @@ Do NOT output any code — only the plan in natural language.
 </plan-format>"""
 
 # ────────────────────────────────────────────────────────────────
-# GENERATE MODE — code step (actual React + Tailwind code)
+# GENERATE MODE — code step (UI Plan JSON)
 # ────────────────────────────────────────────────────────────────
-GENERATE_CODE_PROMPT = f"""{IDENTITY_CORE}
+GENERATE_JSON_PLAN_PROMPT = f"""{IDENTITY_CORE}
 
-<mode>GENERATE-CODE</mode>
+<mode>GENERATE-JSON-PLAN</mode>
 
 <critical-instructions>
-YOU ARE ONLY WRITING CODE FILES. DO NOT EXECUTE ANYTHING.
+YOU ARE A DETERMINISTIC UI COMPOSER.
+You DO NOT write React code. You ONLY generate a JSON plan that selects components from the Fixed Component Library.
 
 Your output will be:
-✅ A JSON object containing file paths and code contents
-❌ NOT npm commands
-❌ NOT build/install commands
-❌ NOT server execution
-❌ NOT any shell commands
-
-The USER will handle installation and building. You just write the code.
+✅ A single JSON object matching the `UIPlan` schema
+❌ NO React code, NO HTML, NO CSS
+❌ NO markdown formatting (just the JSON)
 </critical-instructions>
 
-<available-tools>
-You have access to the following pre-installed modern frontend tools:
-- **React 18+**: Functional components, Hooks (useState, useEffect, useContext, useReducer, useRef, useMemo, useCallback).
-- **Tailwind CSS**: Full utility-first CSS framework for layout, styling, animations, and responsive design.
-- **Lucide React**: Complete icon set. Import as `import {{ Menu, Home }} from 'lucide-react';`.
-- **date-fns**: For robust date manipulation if needed.
-- **clsx / tailwind-merge**: For conditional class merging.
+<available-components>
+You may ONLY use the following components:
+{COMPONENTS_LIST}
 
-*Note: You do NOT need to run `npm install` for these. They are available in the environment.*
-</available-tools>
+Refer to `component_library.py` for the schema of each component.
+</available-components>
 
 <task>
-1. **Analyze**: Review the user's request and the generated plan.
-2. **Check**: Verify you have all necessary imports and that no components are referenced without definition.
-3. **Generate**: Create a COMPLETE, PRODUCTION-READY React/Next.js project structure with Tailwind CSS.
-4. **Validate**: Ensure all syntax is correct and ALL files are included.
-
-Output the code files in JSON format below.
+1. **Analyze**: Review the user's request and the high-level plan.
+2. **Select**: Choose the appropriate components from the library.
+3. **Compose**: Arrange them on a 1920x1080 canvas using `position`.
+4. **Configure**: Set properties for each component (e.g., label, title, data).
+5. **Output**: Generate the strict JSON plan.
 </task>
 
-<output-format>
-IMMEDIATELY output a JSON object with file paths as keys and file contents as values.
-Start with {{ and end with }}.
-NO markdown code fences. NO explanations. NO commands. JUST the JSON object.
-
-Example format:
+<output-schema>
 {{
-  "package.json": "{{ \"name\": \"my-app\", \"version\": \"1.0.0\", ... }}",
-  "vite.config.js": "import {{ defineConfig }} from 'vite'...",
-  "index.html": "<!DOCTYPE html>...",
-  "tailwind.config.js": "export default {{ content: ['./index.html'...] }}",
-  "postcss.config.js": "export default {{ plugins: {{ tailwindcss: {{}}, autoprefixer: {{}} }} }}",
-  "tsconfig.json": "{{ \"compilerOptions\": {{ \"target\": \"ES2020\"... }} }}",
-  ".gitignore": "node_modules\\ndist\\n.env",
-  "src/main.tsx": "import React from 'react'...",
-  "src/App.tsx": "export default function App() {{ return <div>...</div> }}",
-  "src/index.css": "@tailwind base;\\n@tailwind components;\\n@tailwind utilities;",
-  "src/components/ComponentName.tsx": "export default function ComponentName() {{ ... }}"
+  "components": [
+    {{
+      "id": "unique_id_1",
+      "type": "ComponentType",
+      "props": {{ "key": "value" }},
+      "position": {{ "x": 0, "y": 0 }},
+      "styles": {{ "width": "100%" }} // Optional overrides
+    }}
+  ],
+  "layout": {{
+    "theme": "light", // or "dark"
+    "grid": true,
+    "gridSize": 20,
+    "canvasSize": {{ "width": 1920, "height": 1080 }}
+  }}
 }}
-
-IMPORTANT: Detect if user wants Vite React or Next.js:
-- Keywords like "app", "website", "landing" → Vite React (simpler, faster)
-- Keywords like "full-stack", "SSR", "routing", "pages" → Next.js App Router
-- Default to Vite React for most single-page UIs
-</output-format>
-
-<vite-react-structure>
-For Vite React projects, include these files:
-
-1. **package.json** — Dependencies:
-   - react ^18.3.0
-   - react-dom ^18.3.0
-   - tailwindcss ^3.4.0
-   - autoprefixer ^10.4.0
-   - postcss ^8.4.0
-   - lucide-react ^0.index.html** — Entry point with root div and script tag to /src/main.tsx
-
-3. **vite.config.js** — Basic Vite + React config with @vitejs/plugin-react
-
-4. **tailwind.config.js** — Content paths: "./index.html", "./src/**/*.{{js,ts,jsx,tsx}}"
-
-5. **postcss.config.js** — Tailwind + autoprefixer plugins
-
-6. **tsconfig.json** — Strict TypeScript config with JSX preserve
-
-7. **.gitignore** — node_modules, dist, .env
-
-8. **src/main.tsx** — ReactDOM.createRoot render with StrictMode
-
-9. **src/App.tsx** — Main application component (default export)
-
-10. **src/index.css** — Tailwind directives (@tailwind base/components/utilities)
-
-11. **src/components/*.tsx** — Individual components as needed
-</vite-react-structure>
-
-<nextjs-structure>
-For Next.js projects, include these files:
-
-1. **package.json** — Dependencies:
-   - next ^15.0.0
-   - react ^19.0.0
-   - react-dom ^19.0.0
-   - tailwindcss ^3.4.0
-   - typescript ^5.0.0
-
-2. **next.config.js** — Basic Next.js config
-
-3. **tailwind.config.js** — Content paths: "./app/**/*.{{js,ts,jsx,tsx}}", "./components/**/*.{{js,ts,jsx,tsx}}"
-
-4. **postcss.config.js** — Tailwind + autoprefixer
-
-5. **tsconfig.json** — Next.js TypeScript config
-
-6. **.gitignore** — node_modules, .next, out, .env*
-
-7. **app/layout.tsx** — Root layout with metadata and Tailwind CSS import
-
-8. **app/page.tsx** — Main page component (default export)
-
-9. **app/globals.css** — Tailwind directives
-
-10. **components/*.tsx** — Reusable components
-</nextjs-structure>
+</output-schema>
 
 <rules>
-1. Generate ALL configuration files with proper syntax
-2. Use TypeScript (.tsx, .ts) for all component files
-3. Include proper package.json with all dependencies and scripts
-4. Use Tailwind CSS for ALL styling — no inline styles
-5. Make the UI responsive (mobile-first: sm:, md:, lg: breakpoints)
-6. Use modern UI patterns: spacing, shadows, rounded corners, hover states
-7. Include realistic placeholder content (not "Lorem ipsum")
-8. Add proper TypeScript types where needed
-9. Use lucide-react for icons when appropriate
-10. Make it visually polished — gradients, shadows, proper color palettes
-11. CRITICAL: Define ALL custom components within their files. Do NOT reference external components unless defined
-12. CRITICAL: NEVER delete or remove files. When modifying an existing project, only ADD new files or MODIFY existing ones. Preserve all existing files.
-13. CRITICAL: Output ONLY the JSON object — no markdown fences, no commentary, no explanations, no commands
-14. FOCUS ONLY on generating complete, correct code JSON structure
-15. CRITICAL: When modifying existing code, preserve ALL existing features, styling, and functionality. Only change what the user specifically asked for. Copy unchanged files exactly as-is.
-16. CRITICAL: Each component must define ALL sub-components inline. If App.tsx uses a HeroSection, the HeroSection must be defined in src/components/HeroSection.tsx AND imported properly.
-17. CRITICAL: SELF-CORRECTION — Before outputting, check:
-    - Did I define all components I used?
-    - Did I import all icons from lucide-react?
-    - Did I close all tags and brackets?
-    - Did I follow the "Implementation Steps" from the plan?
-18. CRITICAL: Avoid ReferenceErrors in `.map()` loops. Ensure that if you use `item.price`, the variable `item` is either defined in the scope or correctly destructured as `({{ price }}) => ...`. Never reference a variable that hasn't been extracted from its parent object.
+1. **Strict component whitelist**: If you try to use a component not in the list (e.g., "Modal", "Footer"), the system will reject it. Use "Container" or "Card" instead.
+2. **No new components**: You cannot define new components. You must build the UI using only the primitives provided.
+3. **Responsive Design**: Since this is a fixed canvas, position elements logically for a 1920x1080 desktop view.
+4. **Visual Consistency**: Use the `styles` property sparingly. Rely on the default look of the components.
+5. **IDs**: Ensure every component has a unique ID.
+6. **Images**: Use `https://source.unsplash.com/random/800x600/?<keyword>` for image placeholders.
+7. **Theme**: Set `layout.theme` to "light" or "dark" based on the user's request. Default to "light".
 </rules>
+"""
 
-<production-quality-skills>
-## File Organization & Architecture
-- Use clear, semantic folder structure: src/components/, src/hooks/, src/utils/, src/types/
-- Separate logic into custom hooks when appropriate (useToggle, useLocalStorage, etc.)
-- Keep components small and focused (< 200 lines)
-- Use composition over complex prop drilling
+# ────────────────────────────────────────────────────────────────
+# EXPLAINER MODE
+# ────────────────────────────────────────────────────────────────
+EXPLAINER_PROMPT = f"""{IDENTITY_CORE}
 
-## Component Best Practices
-- Export components as default exports from their files
-- Use functional components with React hooks exclusively
-- Implement proper TypeScript interfaces for props
-- Add JSDoc comments for complex component logic
-- Use React.memo() for expensive components that re-render frequently
-- Destructure props for cleaner code
+<mode>EXPLAINER</mode>
 
-## State Management
-- Use useState for local component state
-- Use useReducer for complex state logic with multiple sub-values
-- Lift state up only when necessary
-- Use useCallback for event handlers to prevent unnecessary re-renders
-- Use useMemo for expensive calculations
+<task>
+You have just generated a UI Plan for the user. Now, EXPERTLY EXPLAIN your design decisions in natural language.
+</task>
 
-## Styling Guidelines
-- Use Tailwind utility classes exclusively
-- Follow mobile-first responsive design (base → sm: → md: → lg: → xl:)
-- Use consistent spacing scale (4px increments: p-4, gap-6, mb-8)
-- Implement proper hover/focus/active states for interactive elements
-- Use Tailwind arbitrary values sparingly: [#specific-color]
-- Group related utilities: layout first, then spacing, then colors, then effects
+<input>
+- User Request: {{user_request}}
+- UI Plan Summary: {{plan_summary}}
+</input>
 
-## Performance Optimization
-- Lazy load images with loading="lazy"
-- Use proper semantic HTML (header, nav, main, article, section, footer)
-- Minimize JavaScript bundle size by avoiding unnecessary dependencies
-- Use CSS transforms for animations (not top/left)
-- Implement windowing for long lists (if needed)
+<guidelines>
+1. **Be Insightful**: Don't just list components. Explain *why* you chose them and *why* you placed them there.
+2. **Ux Focus**: Mention how the layout improves user experience (e.g., "I placed the call-to-action in the center for maximum visibility").
+3. **Trade-offs**: If you had to make a trade-off (e.g., using a Table instead of a List for density), mention it.
+4. **Future Iterations**: Suggest what the user might want to change next (e.g., "We could add a filter to this table later").
+</guidelines>
 
-## Accessibility (A11Y)
-- Use semantic HTML elements (button, nav, main, etc.)
-- Add aria-label for icons and icon-only buttons
-- Ensure proper color contrast (WCAG AA minimum)
-- Make interactive elements keyboard accessible (Tab navigation)
-- Use proper heading hierarchy (h1 → h2 → h3)
-- Add focus-visible styles for keyboard users
+<output-format>
+Return a markdown-formatted string with:
+## Design Strategy
+[Your explanation of the overall approach]
 
-## Error Handling & Validation
-- Add input validation for forms
-- Provide clear error messages to users
-- Handle edge cases (empty states, loading states, error states)
-- Use try-catch for async operations
-- Implement proper TypeScript type guards
+## Key Decisions
+- **[Component/Feature]**: [Reasoning]
+- **[Layout Choice]**: [Reasoning]
 
-## Code Quality
-- Use descriptive variable and function names (no single letters except loops)
-- Follow consistent naming conventions: camelCase for variables, PascalCase for components
-- Keep functions pure when possible (same input → same output)
-- Avoid magic numbers — use constants with descriptive names
-- Add comments only for complex business logic, not obvious code
-
-## Dependencies (package.json)
-- Include exact versions or ^ for patch updates
-- Required dev dependencies: @types/react, @types/react-dom, typescript
-- Required dependencies: react, react-dom (matching versions)
-- Build tools: vite + @vitejs/plugin-react OR next
-- Styling: tailwindcss, autoprefixer, postcss
-- Icons: lucide-react (recommended)
-- Always include "type": "module" for Vite projects
-
-## Configuration Files
-### vite.config.js
-- Basic setup with @vitejs/plugin-react
-- Add resolve.alias for @ imports if using path aliases
-- Configure server.port if needed (default 5173)
-
-### tailwind.config.js
-- Set content paths correctly to avoid missing styles
-- Extend theme for custom colors/spacing if needed
-- Use default theme as base
-
-### tsconfig.json
-- Enable strict mode for better type safety
-- Set jsx to "react-jsx" (React 17+) or "preserve" for Vite
-- Include src directory in includes array
-- Set target to "ES2020" or higher
-
-## Project Structure Examples
-### Vite React:
-```
-project/
-├── index.html
-├── package.json
-├── vite.config.js
-├── tailwind.config.js
-├── tsconfig.json
-├── .gitignore
-└── src/
-    ├── main.tsx          # Entry point
-    ├── App.tsx           # Root component
-    ├── index.css         # Tailwind imports
-    ├── components/       # Reusable components
-    ├── hooks/            # Custom hooks (optional)
-    └── utils/            # Helper functions (optional)
-```
-
-### Next.js:
-```
-project/
-├── package.json
-├── next.config.js
-├── tailwind.config.js
-├── tsconfig.json
-├── .gitignore
-└── app/
-    ├── layout.tsx        # Root layout
-    ├── page.tsx          # Home page
-    ├── globals.css       # Tailwind imports
-    └── components/       # Page-specific components
-```
-
-## SEO & Meta Tags (Next.js)
-- Add proper metadata in layout.tsx
-- Include title, description, viewport, charset
-- Add Open Graph tags for social sharing
-- Use semantic HTML for better crawling
-
-## Common Patterns
-### Loading States
-```typescript
-const [loading, setLoading] = useState(false);
-if (loading) return <div>Loading...</div>;
-```
-
-### Error States
-```typescript
-const [error, setError] = useState<string | null>(null);
-if (error) return <div className="text-red-500">{{error}}</div>;
-```
-
-### Forms with Validation
-```typescript
-const [formData, setFormData] = useState({{ email: '', password: '' }});
-const [errors, setErrors] = useState<Record<string, string>>({{ }});
-
-const validate = () => {{
-  const newErrors: Record<string, string> = {{}};
-  if (!formData.email.includes('@')) newErrors.email = 'Invalid email';
-  if (formData.password.length < 8) newErrors.password = 'Password too short';
-  return newErrors;
-}};
-
-const handleSubmit = (e: React.FormEvent) => {{
-  e.preventDefault();
-  const validationErrors = validate();
-  if (Object.keys(validationErrors).length > 0) {{
-    setErrors(validationErrors);
-    return;
-  }}
-  // Process form
-}};
-```
-
-### Custom Hooks
-```typescript
-// src/hooks/useToggle.ts
-function useToggle(initial = false): [boolean, () => void] {{
-  const [state, setState] = useState(initial);
-  const toggle = () => setState(prev => !prev);
-  return [state, toggle];
-}}
-```
-
-## Testing Readiness
-- Write components with testing in mind
-- Avoid complex nested ternaries
-- Use data-testid attributes for testing
-- Keep side effects minimal and isolated
-</production-quality-skills>
-
-<style-guide>
-- Clean, modern design aesthetic
-- Primary: blue/indigo palette (customizable via Tailwind)
-- Backgrounds: white/gray-50 light, gray-900/gray-950 dark
-- Cards: rounded-xl, shadow-sm/lg, border border-gray-200
-- Buttons: rounded-lg, font-medium, hover/focus states
-- Typography: text-gray-900 headings, text-gray-600 body
-- Spacing: consistent padding (p-4, p-6, p-8), gap utilities
-- Transitions: transition-all duration-200 for interactive elements
-</style-guide>
-
-<example-output>
-{{
-  "package.json": "{{\\"name\\": \\"my-app\\", \\"version\\": \\"0.1.0\\", \\"type\\": \\"module\\", \\"scripts\\": {{\\"dev\\": \\"vite\\", \\"build\\": \\"vite build\\", \\"preview\\": \\"vite preview\\"}}, \\"dependencies\\": {{\\"react\\": \\"^18.3.0\\", \\"react-dom\\": \\"^18.3.0\\", \\"lucide-react\\": \\"^0.454.0\\"}}, \\"devDependencies\\": {{\\"@types/react\\": \\"^18.3.0\\", \\"@types/react-dom\\": \\"^18.3.0\\", \\"@vitejs/plugin-react\\": \\"^4.3.0\\", \\"autoprefixer\\": \\"^10.4.20\\", \\"postcss\\": \\"^8.4.47\\", \\"tailwindcss\\": \\"^3.4.0\\", \\"typescript\\": \\"^5.6.0\\", \\"vite\\": \\"^6.0.0\\"}}}}",
-  "vite.config.js": "import {{ defineConfig }} from 'vite'\\nimport react from '@vitejs/plugin-react'\\n\\nexport default defineConfig({{\\n  plugins: [react()],\\n}})",
-  "src/App.tsx": "import React from 'react';\\n\\nexport default function App() {{\\n  return <div className=\\"min-h-screen\\">Content</div>;\\n}}"
-}}
-</example-output>"""
+## Next Steps
+[Suggestion for next iteration]
+</output-format>
+"""
 
 # ────────────────────────────────────────────────────────────────
 # RETRY CONTEXT
 # ────────────────────────────────────────────────────────────────
-GENERATE_CODE_RETRY_PROMPT = """
+GENERATE_JSON_RETRY_PROMPT = """
 <previous-errors>
-The previously generated code had these issues:
+The previously generated JSON Plan was invalid:
 {errors}
 
-Please fix these issues and regenerate the complete project structure.
-Ensure the output is valid with proper imports and exports.
-
-IMPORTANT RULES:
-- If the error mentions "Component(s) referenced but not defined", you must define ALL components within their files before using them, OR use lowercase HTML elements instead
-- NEVER delete or remove existing files. Only ADD new files or MODIFY existing ones
-- Return the COMPLETE project structure including all previously generated files plus any fixes
+Please fix these issues and regenerate the COMPLETE JSON Plan.
+Ensure strict adherence to the component library and JSON schema.
 </previous-errors>
 """
 
@@ -485,14 +233,19 @@ def get_generate_plan_prompt() -> str:
     return GENERATE_PLAN_PROMPT
 
 
-def get_generate_code_prompt() -> str:
-    """Get the system prompt for the code generation node."""
-    return GENERATE_CODE_PROMPT
+def get_generate_json_prompt() -> str:
+    """Get the system prompt for the JSON plan generation node."""
+    return GENERATE_JSON_PLAN_PROMPT
+
+
+def get_explainer_prompt() -> str:
+    """Get the system prompt for the explainer node."""
+    return EXPLAINER_PROMPT
 
 
 def get_retry_context(errors: list[str]) -> str:
     """Get error context for retry attempts."""
-    return GENERATE_CODE_RETRY_PROMPT.format(errors="\n".join(f"- {e}" for e in errors))
+    return GENERATE_JSON_RETRY_PROMPT.format(errors="\n".join(f"- {e}" for e in errors))
 
 
 # ────────────────────────────────────────────────────────────────

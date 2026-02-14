@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, ChevronDown, Cpu, Sparkles, Zap, Globe, Brain, Loader2 } from "lucide-react";
+import { Check, ChevronDown, Cpu, Zap, Globe, Brain, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     DropdownMenu,
@@ -22,16 +22,9 @@ export interface AIModel {
 }
 
 // Static fallback models (used if API fetch fails)
-const FALLBACK_MODELS: AIModel[] = [
-    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", provider: "gemini" },
-    { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", provider: "gemini" },
-    { id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash (Exp)", provider: "gemini" },
-    { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", provider: "claude" },
-    { id: "gpt-4o", name: "GPT-4o", provider: "openai" },
-];
 
 const PROVIDER_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-    gemini: Sparkles,
+    gemini: Brain,
     claude: Cpu,
     openrouter: Globe,
     ollama: Zap,
