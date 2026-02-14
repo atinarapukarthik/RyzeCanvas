@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useRef, useEffect, Suspense } from "react";
+import { useState, useRef, useEffect, Suspense, useCallback } from "react";
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CodeComparison } from "@/components/ui/code-comparison";
 import { PromptBox } from "@/components/ui/prompt-box";
-import { useAuthStore } from "@/stores/authStore";
 import { useUIStore } from "@/stores/uiStore";
 import { createProject, searchWeb, updateProject, streamChat, fetchProjects } from "@/lib/api";
 import { toast } from "sonner";
@@ -34,6 +33,15 @@ interface Message {
     questions?: PlanQuestion[];
     plan?: PlanData;
     implementationStatus?: ImplementationStatus;
+}
+
+interface ArchivedChat {
+    key: string;
+    timestamp: string;
+    projectName: string;
+    contextId: string;
+    code?: string;
+    prompt?: string;
 }
 
 interface PlanQuestion {
@@ -151,6 +159,29 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
     // Babel standalone with TypeScript preset handles all TS syntax (types, interfaces, generics).
     // We only need to handle imports (unresolvable in browser) and exports (need to identify the root component).
 
+    // Scan for imports to auto-stub missing libraries (e.g., react-icons, recharts, framer-motion)
+    const importedNames = new Set<string>();
+    const importRegex = /import\s+(?:type\s+)?\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/g;
+    const defaultImportRegex = /import\s+(?:type\s+)?(\w+)\s+from\s+['"]([^'"]+)['"]/g;
+
+    let match;
+    while ((match = importRegex.exec(mergedCode)) !== null) {
+        const [, names, module] = match;
+        if (module !== 'react' && module !== 'react-dom') {
+            names.split(',').forEach(n => {
+                const alias = n.trim().split(' as ')[1]?.trim() || n.trim();
+                // Avoid stubbing "lucide-react" exports as they are handled by the proxy
+                if (alias) importedNames.add(alias);
+            });
+        }
+    }
+    while ((match = defaultImportRegex.exec(mergedCode)) !== null) {
+        const [, name, module] = match;
+        if (module !== 'react' && module !== 'react-dom') {
+            importedNames.add(name);
+        }
+    }
+
     const codeWithoutImports = mergedCode
         // Remove all import statements (single-line and multi-line)
         .replace(/^import[\s\S]*?from\s*['"][^'"]*['"];?\s*$/gm, '')
@@ -164,7 +195,19 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         // 3. `export default <expression>` (arrow fn, class expr, etc.) → assign to a var
         .replace(/^export\s+default\s+/gm, 'const __DefaultExport__ = ')
         // Remove export keyword from named exports (keep the declaration)
-        .replace(/^export\s+(function|const|let|var|class)\s+/gm, '$1 ');
+        .replace(/^export\s+(function|const|let|var|class)\s+/gm, '$1 ')
+        // ── TypeScript pre-stripping (safety net before Babel) ──
+        // Remove `type X = ...` and `interface X { ... }` declarations entirely
+        .replace(/^(?:export\s+)?type\s+\w+(?:<[^>]*>)?\s*=\s*[^;]*;?\s*$/gm, '')
+        .replace(/^(?:export\s+)?interface\s+\w+(?:\s+extends\s+\w+)?(?:<[^>]*>)?\s*\{[^}]*\}\s*$/gm, '')
+        // Remove type annotations from variable declarations: `const x: Type = ...` → `const x = ...`
+        .replace(/(?<=[(\s,])(\w+)\s*:\s*(?:string|number|boolean|any|void|null|undefined|never|unknown|object|React\.\w+|Array<[^>]*>|Record<[^>]*>|\w+(?:\[\])?)\s*(?=[=,)\n])/g, '$1 ')
+        // Remove generic type parameters from function calls: fn<Type>(...) → fn(...)
+        .replace(/(?<=\w)<(?:string|number|boolean|any|[A-Z]\w*)(?:\s*,\s*(?:string|number|boolean|any|[A-Z]\w*))*>\s*(?=\()/g, '')
+        // Remove `as Type` type assertions
+        .replace(/\s+as\s+(?:const|string|number|boolean|any|unknown|\w+(?:\[\])?)\b/g, '')
+        // Remove standalone `type` imports that might have been partially stripped
+        .replace(/^import\s+type\b[^;]*;?\s*$/gm, '');
 
     // Scan user code for declared names to avoid duplicate identifier errors with icon stubs
     const declaredNames = new Set<string>();
@@ -200,6 +243,12 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
     const iconDestructuring = safeIcons.length > 0
         ? `const { ${safeIcons.join(', ')} } = lucideReact;`
         : '// All icon names conflict with user code — icons available via lucideReact proxy';
+
+    const reactGlobals = new Set(['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'createContext', 'useReducer', 'useId', 'Fragment', 'forwardRef', 'memo', 'Suspense']);
+    const stubsToGenerate = Array.from(importedNames).filter(n => !reactGlobals.has(n) && !allIconNames.includes(n) && !declaredNames.has(n));
+    const importStubs = stubsToGenerate.length > 0
+        ? stubsToGenerate.map(n => `const ${n} = React.forwardRef((props, ref) => React.createElement('div', { ...props, ref }, props.children));`).join('\n')
+        : '';
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -244,6 +293,35 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         };
         const lucideReact = new Proxy({}, iconHandler);
         ${iconDestructuring}
+        
+        // Auto-generated stubs for missing imports
+        ${importStubs}
+
+        // Catch-all stubs for missing icon/Icon variables often used in AI code maps
+        if (typeof icon === 'undefined') {
+            var icon = (props) => React.createElement('div', { ...props }, 'Icon');
+        }
+        if (typeof Icon === 'undefined') {
+            var Icon = (props) => React.createElement('div', { ...props }, 'Icon');
+        }
+        if (typeof id === 'undefined') {
+            var id = 'id-' + Math.random().toString(36).substr(2, 9);
+        }
+        if (typeof key === 'undefined') {
+            var key = 'key-' + Math.random().toString(36).substr(2, 9);
+        }
+        if (typeof price === 'undefined') {
+            var price = '$0.00';
+        }
+        if (typeof item === 'undefined') {
+            var item = {};
+        }
+        if (typeof t === 'undefined') {
+            var t = (s) => s;
+        }
+        if (typeof feature === 'undefined') {
+            var feature = { title: 'Feature', description: 'Description' };
+        }
 
         // Stub for common UI component libraries (framer-motion, etc.)
         const motion = new Proxy({}, {
@@ -442,8 +520,7 @@ function FileTreeView({ files, activeFile, onSelect, depth = 0 }: {
 }
 
 function StudioContent() {
-    const { user, isAuthenticated, logout } = useAuthStore();
-    const { githubConnected, setGithubConnected, selectedModel, setSelectedModel, githubModal, setGithubModal } = useUIStore();
+    const { githubConnected, setGithubConnected, selectedModel, githubModal, setGithubModal } = useUIStore();
     const router = useRouter();
     const searchParams = useSearchParams();
 
@@ -466,7 +543,6 @@ function StudioContent() {
     const [pushing, setPushing] = useState(false);
     const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
     const [chatMode, setChatMode] = useState<'chat' | 'plan'>('chat');
-    const [framework, setFramework] = useState<'react' | 'nextjs'>('react');
     const [repoUrl, setRepoUrl] = useState('');
     const [chatCollapsed, setChatCollapsed] = useState(false);
     const [projectId, setProjectId] = useState<string>('');
@@ -476,7 +552,7 @@ function StudioContent() {
             const stored = sessionStorage.getItem('ryze-current-session-id');
             if (stored) return stored;
         }
-        const newId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const newId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
         if (typeof window !== 'undefined') {
             sessionStorage.setItem('ryze-current-session-id', newId);
         }
@@ -489,10 +565,9 @@ function StudioContent() {
     const [isAnsweringQuestions, setIsAnsweringQuestions] = useState(false);
     const [implementationStatus, setImplementationStatus] = useState<ImplementationStatus | null>(null);
     const [isImplementing, setIsImplementing] = useState(false);
-    const [previewFileQueue, setPreviewFileQueue] = useState<FileUpdateStatus[]>([]);
     const [currentPreviewFile, setCurrentPreviewFile] = useState<string>('');
     const [allGeneratedFiles, setAllGeneratedFiles] = useState<Record<string, string>>({});
-    const [previousAllFiles, setPreviousAllFiles] = useState<Record<string, string>>({});
+    const [previousAllFiles] = useState<Record<string, string>>({});
     const [diffFile, setDiffFile] = useState<string>('');
     const [previewRoute, setPreviewRoute] = useState<string>('');
     const [routeSearchOpen, setRouteSearchOpen] = useState(false);
@@ -501,7 +576,7 @@ function StudioContent() {
     const [previewError, setPreviewError] = useState<{ message: string; stack?: string } | null>(null);
     const [errorModalOpen, setErrorModalOpen] = useState(false);
     const [archivesModalOpen, setArchivesModalOpen] = useState(false);
-    const [archivedChats, setArchivedChats] = useState<any[]>([]);
+    const [archivedChats, setArchivedChats] = useState<ArchivedChat[]>([]);
     const [historySource, setHistorySource] = useState<'archives' | 'projects'>('archives');
 
     const chatEndRef = useRef<HTMLDivElement>(null);
@@ -511,11 +586,9 @@ function StudioContent() {
     const handleSendRef = useRef<((msg?: string) => Promise<void>) | null>(null);
     const routeSearchRef = useRef<HTMLDivElement>(null);
 
-    // Helper function to get current context ID (projectId takes precedence over sessionId)
-    const getContextId = () => projectId || sessionId;
+    const getContextId = useCallback(() => projectId || sessionId, [projectId, sessionId]);
 
-    // Helper function to migrate localStorage from sessionId to projectId
-    const migrateSessionToProject = (newProjectId: string) => {
+    const migrateSessionToProject = useCallback((newProjectId: string) => {
         const oldContextId = sessionId;
         const newContextId = newProjectId;
 
@@ -539,7 +612,7 @@ function StudioContent() {
             localStorage.setItem(`ryze-project-name-${newContextId}`, oldName);
             localStorage.removeItem(`ryze-project-name-${oldContextId}`);
         }
-    };
+    }, [sessionId]);
 
     // Load project from history if projectId is in URL
     useEffect(() => {
@@ -574,10 +647,42 @@ function StudioContent() {
             fetchProjects().then((projects) => {
                 const project = projects.find((p) => p.id === loadProjectId);
                 if (project && project.code) {
-                    setGeneratedCode(project.code);
-                    setEditableCode(project.code);
                     setProjectId(project.id);
+                    setProjectName(project.title || 'Untitled Project');
                     setActiveTab('preview');
+
+                    // Detect if code_json is a multi-file JSON project or single-file code
+                    let parsedFiles: Record<string, string> | null = null;
+                    try {
+                        const parsed = JSON.parse(project.code);
+                        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+                            // Check if keys look like file paths
+                            const keys = Object.keys(parsed);
+                            const hasFilePaths = keys.some(k => k.includes('.') || k.includes('/'));
+                            if (hasFilePaths && keys.length >= 2) {
+                                parsedFiles = parsed;
+                            }
+                        }
+                    } catch {
+                        // Not JSON — it's single-file code
+                    }
+
+                    if (parsedFiles) {
+                        // Multi-file project: restore allGeneratedFiles and use App.tsx for preview
+                        setAllGeneratedFiles(parsedFiles);
+                        const mainFile =
+                            parsedFiles['src/App.tsx'] ||
+                            parsedFiles['src/App.jsx'] ||
+                            parsedFiles['app/page.tsx'] ||
+                            Object.values(parsedFiles).find(v => v.includes('export default')) ||
+                            Object.values(parsedFiles)[0];
+                        setGeneratedCode(mainFile || '');
+                        setEditableCode(mainFile || '');
+                    } else {
+                        // Single-file code
+                        setGeneratedCode(project.code);
+                        setEditableCode(project.code);
+                    }
 
                     // Load project-specific conversation history from localStorage
                     const projectHistoryKey = `ryze-chat-history-${project.id}`;
@@ -598,7 +703,7 @@ function StudioContent() {
                                     }
                                 ]);
                             }
-                        } catch (e) {
+                        } catch {
                             // Invalid JSON, use default
                             setMessages([
                                 { role: 'ai', content: 'Hello! I\'m Ryze. Describe the UI you want to build and I\'ll generate production-ready React + Tailwind CSS code. Try saying "Create a landing page" or "Build a dashboard".' },
@@ -639,6 +744,42 @@ function StudioContent() {
             return;
         }
 
+        // On plain reload (no URL params), try to recover active project from sessionStorage
+        const storedProjectId = typeof window !== 'undefined' ? sessionStorage.getItem('ryze-current-project-id') : null;
+        if (storedProjectId && !projectId) {
+            // Reload project from DB
+            fetchProjects().then((projects) => {
+                const project = projects.find((p) => p.id === storedProjectId);
+                if (project && project.code) {
+                    setProjectId(project.id);
+                    setProjectName(project.title || 'Untitled Project');
+
+                    // Parse multi-file project
+                    let parsedFiles: Record<string, string> | null = null;
+                    try {
+                        const parsed = JSON.parse(project.code);
+                        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+                            const keys = Object.keys(parsed);
+                            if (keys.some(k => k.includes('.') || k.includes('/')) && keys.length >= 2) {
+                                parsedFiles = parsed;
+                            }
+                        }
+                    } catch { /* single-file */ }
+
+                    if (parsedFiles) {
+                        setAllGeneratedFiles(parsedFiles);
+                        const mainFile = parsedFiles['src/App.tsx'] || parsedFiles['src/App.jsx'] || parsedFiles['app/page.tsx'] || Object.values(parsedFiles)[0];
+                        setGeneratedCode(mainFile || '');
+                        setEditableCode(mainFile || '');
+                    } else {
+                        setGeneratedCode(project.code);
+                        setEditableCode(project.code);
+                    }
+                    setActiveTab('preview');
+                }
+            }).catch(() => { });
+        }
+
         // Try to load from context-specific localStorage for continuing sessions
         const contextId = getContextId();
         const savedMessages = localStorage.getItem(`ryze-chat-history-${contextId}`);
@@ -651,7 +792,7 @@ function StudioContent() {
                 if (Array.isArray(parsed) && parsed.length > 1) {
                     setMessages(parsed);
                 }
-            } catch (e) {
+            } catch {
                 // Invalid JSON in localStorage
             }
         }
@@ -677,7 +818,18 @@ function StudioContent() {
         if (savedProjectName) {
             setProjectName(savedProjectName);
         }
-    }, []);
+    }, [searchParams, projectId, getContextId]);
+
+    // Persist projectId to sessionStorage so it survives page reloads
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            if (projectId) {
+                sessionStorage.setItem('ryze-current-project-id', projectId);
+            } else {
+                sessionStorage.removeItem('ryze-current-project-id');
+            }
+        }
+    }, [projectId, getContextId]);
 
     // Save chat history to localStorage whenever messages change (project-scoped)
     useEffect(() => {
@@ -692,7 +844,7 @@ function StudioContent() {
             }));
             try {
                 localStorage.setItem(`ryze-chat-history-${contextId}`, JSON.stringify(essentialMessages));
-            } catch (e) {
+            } catch {
                 // Storage quota exceeded - archive old data
                 console.warn('localStorage quota exceeded, archiving...');
                 const timestamp = new Date().toISOString();
@@ -705,7 +857,7 @@ function StudioContent() {
                 localStorage.removeItem(`ryze-chat-history-${contextId}`);
             }
         }
-    }, [messages, projectId, sessionId, projectName]);
+    }, [messages, projectId, sessionId, projectName, getContextId]);
 
     // Save generated code to localStorage (project-scoped)
     useEffect(() => {
@@ -713,7 +865,7 @@ function StudioContent() {
             const contextId = getContextId();
             localStorage.setItem(`ryze-generated-code-${contextId}`, generatedCode);
         }
-    }, [generatedCode, projectId, sessionId]);
+    }, [generatedCode, projectId, sessionId, getContextId]);
 
     // Save all generated files to localStorage (project-scoped) for multi-file projects
     useEffect(() => {
@@ -725,7 +877,7 @@ function StudioContent() {
                 // Storage quota exceeded — skip
             }
         }
-    }, [allGeneratedFiles, projectId, sessionId]);
+    }, [allGeneratedFiles, projectId, sessionId, getContextId]);
 
     // Save project name to localStorage (project-scoped)
     useEffect(() => {
@@ -733,7 +885,7 @@ function StudioContent() {
             const contextId = getContextId();
             localStorage.setItem(`ryze-project-name-${contextId}`, projectName);
         }
-    }, [projectName, projectId, sessionId]);
+    }, [projectName, projectId, sessionId, getContextId]);
 
     // Load prompt and mode from Dashboard
     useEffect(() => {
@@ -777,12 +929,12 @@ function StudioContent() {
 
     useEffect(() => {
         setEditableCode(generatedCode);
-    }, [generatedCode]);
+    }, [generatedCode, setEditableCode]);
 
     // Close route search dropdown on outside click
     useEffect(() => {
-        const handleClickOutside = (e: MouseEvent) => {
-            if (routeSearchRef.current && !routeSearchRef.current.contains(e.target as Node)) {
+        const handleClickOutside = (_e: MouseEvent) => {
+            if (routeSearchRef.current && !routeSearchRef.current.contains(_e.target as Node)) {
                 setRouteSearchOpen(false);
             }
         };
@@ -817,7 +969,7 @@ function StudioContent() {
         }
     }, [generatedCode, previousCode]);
 
-    const handleSend = async (promptMessage?: string) => {
+    const handleSend = useCallback(async (promptMessage?: string) => {
         const prompt = promptMessage || input;
         if (!prompt.trim() || generating) return;
         setInput('');
@@ -929,7 +1081,7 @@ function StudioContent() {
                 },
 
                 onQuestions: (questionsData) => {
-                    const questions: PlanQuestion[] = (questionsData.questions || []).map((q: any) => ({
+                    const questions: PlanQuestion[] = (questionsData.questions || []).map((q: PlanQuestion) => ({
                         id: q.id,
                         question: q.question,
                         options: [...q.options, ''], // 4th slot for custom input
@@ -985,19 +1137,25 @@ function StudioContent() {
                 onFileUpdate: (statuses) => {
                     setImplementationStatus((prev) => prev ? { ...prev, fileUpdates: statuses, phase: 'creating' } : null);
                     // Store completed files and show latest in preview
-                    const completedFiles = statuses.filter((s: any) => s.status === 'completed' && s.code);
+                    const completedFiles = statuses.filter((s: FileUpdateStatus) => s.status === 'completed' && s.code);
                     if (completedFiles.length > 0) {
                         const newFiles: Record<string, string> = {};
-                        completedFiles.forEach((f: any) => { newFiles[f.path] = f.code; });
+                        completedFiles.forEach((f: FileUpdateStatus) => { newFiles[f.path] = f.code!; });
                         setAllGeneratedFiles((prev) => ({ ...prev, ...newFiles }));
                         const latestFile = completedFiles[completedFiles.length - 1];
-                        setCurrentPreviewFile(latestFile.code);
+                        setCurrentPreviewFile(latestFile.code!);
                         setActiveTab('preview');
                     }
                 },
 
                 onTodo: (todos) => {
-                    setImplementationStatus((prev) => prev ? { ...prev, todos } : null);
+                    setImplementationStatus((prev) => ({
+                        phase: prev?.phase || 'creating',
+                        todos,
+                        installingLibraries: prev?.installingLibraries || [],
+                        fileUpdates: prev?.fileUpdates || [],
+                        currentFileIndex: prev?.currentFileIndex || 0,
+                    }));
                 },
 
                 onCommand: (result) => {
@@ -1041,10 +1199,8 @@ function StudioContent() {
                 },
 
                 onDone: (meta) => {
-                    // Append completion info for generate mode
                     if (orchestrationMode === 'generate' && meta?.success) {
                         const retries = meta.retries || 0;
-                        const fileCount = meta.file_count || (meta.all_files ? Object.keys(meta.all_files).length : 1);
                         let suffix = `\n\nGenerated production-ready code using **${selectedModel.name}**`;
                         if (retries > 0) suffix += ` (fixed after ${retries} retries)`;
                         suffix += '. Check the Preview tab to see it live.';
@@ -1145,7 +1301,7 @@ function StudioContent() {
             setSearchingWeb(false);
             abortControllerRef.current = null;
         }
-    };
+    }, [input, generating, searchParams, chatMode, selectedModel, messages, generatedCode, previousCode, projectId, migrateSessionToProject, allGeneratedFiles, webSearchEnabled]);
 
     // Set the handleSend ref for auto-sending from Dashboard
     useEffect(() => {
@@ -1338,10 +1494,10 @@ function StudioContent() {
 
                 onFileUpdate: (statuses) => {
                     setImplementationStatus((prev) => prev ? { ...prev, fileUpdates: statuses, phase: 'creating' } : null);
-                    const completedFiles = statuses.filter((s: any) => s.status === 'completed' && s.code);
+                    const completedFiles = statuses.filter((s: FileUpdateStatus) => s.status === 'completed' && s.code);
                     if (completedFiles.length > 0) {
                         const newFiles: Record<string, string> = {};
-                        completedFiles.forEach((f: any) => { newFiles[f.path] = f.code; });
+                        completedFiles.forEach((f: FileUpdateStatus) => { newFiles[f.path] = f.code!; });
                         setAllGeneratedFiles((prev) => ({ ...prev, ...newFiles }));
                         const latestFile = completedFiles[completedFiles.length - 1];
                         setCurrentPreviewFile(latestFile.code);
@@ -1350,7 +1506,13 @@ function StudioContent() {
                 },
 
                 onTodo: (todos) => {
-                    setImplementationStatus((prev) => prev ? { ...prev, todos } : null);
+                    setImplementationStatus((prev) => ({
+                        phase: prev?.phase || 'creating',
+                        todos,
+                        installingLibraries: prev?.installingLibraries || [],
+                        fileUpdates: prev?.fileUpdates || [],
+                        currentFileIndex: prev?.currentFileIndex || 0,
+                    }));
                 },
 
                 onCommand: (result) => {
@@ -2425,7 +2587,7 @@ ${previewError.stack || previewError.message}`;
                                                 <Play className="h-8 w-8 text-primary shadow-primary" />
                                             </div>
                                             <p className="text-sm font-semibold text-foreground">Awaiting Generation</p>
-                                            <p className="text-[11px] text-muted-foreground/60 mt-1 max-w-[220px]">Describe what you want to build and I'll generate production-ready React + Tailwind code with a live preview.</p>
+                                            <p className="text-[11px] text-muted-foreground/60 mt-1 max-w-[220px]">Describe what you want to build and I&apos;ll generate production-ready React + Tailwind code with a live preview.</p>
                                         </div>
                                     </div>
                                 )}
@@ -2687,7 +2849,7 @@ ${previewError.stack || previewError.message}`;
                                 </div>
                             ) : (
                                 <div className="flex-1 overflow-auto space-y-2">
-                                    {archivedChats.map((archive, idx) => (
+                                    {archivedChats.map((archive) => (
                                         <div
                                             key={archive.key}
                                             className="glass rounded-xl p-4 border border-border/50 hover:border-primary/50 transition-all group"

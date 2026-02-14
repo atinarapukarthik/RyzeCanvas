@@ -1,13 +1,13 @@
 "use client";
 
 import * as React from "react";
+import Image from "next/image";
 import { useState, useRef } from "react";
 import {
 	Send,
 	Paperclip,
 	Mic,
 	Settings,
-	Image as ImageIcon,
 	X,
 	Search,
 	Code2,
@@ -28,6 +28,69 @@ interface PromptOptions {
 	webSearch?: boolean;
 	framework?: "next" | "react" | null;
 	planMode?: boolean;
+}
+
+function ImagePreviewItem({
+	image,
+	onRemove,
+	onClick,
+}: {
+	image: File;
+	onRemove: () => void;
+	onClick: () => void;
+}) {
+	const [url, setUrl] = React.useState<string>("");
+
+	React.useEffect(() => {
+		const newUrl = URL.createObjectURL(image);
+		setUrl(newUrl);
+		return () => URL.revokeObjectURL(newUrl);
+	}, [image]);
+
+	if (!url) return <div className="w-20 h-20 rounded-lg bg-muted animate-pulse" />;
+
+	return (
+		<div className="relative w-20 h-20 rounded-lg overflow-hidden border border-border bg-muted group">
+			<Image
+				src={url}
+				alt="Upload preview"
+				width={80}
+				height={80}
+				className="w-full h-full object-cover cursor-pointer"
+				onClick={onClick}
+				unoptimized
+			/>
+			<button
+				onClick={onRemove}
+				className="absolute top-1 right-1 w-5 h-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+			>
+				<X className="w-3 h-3" />
+			</button>
+		</div>
+	);
+}
+
+function LargeImagePreview({ image }: { image: File }) {
+	const [url, setUrl] = React.useState<string>("");
+
+	React.useEffect(() => {
+		const newUrl = URL.createObjectURL(image);
+		setUrl(newUrl);
+		return () => URL.revokeObjectURL(newUrl);
+	}, [image]);
+
+	if (!url) return null;
+
+	return (
+		<Image
+			src={url}
+			alt="Preview"
+			width={500}
+			height={500}
+			className="w-full h-full object-contain rounded-lg"
+			unoptimized
+		/>
+	);
 }
 
 export function ChatGPTPromptInput({
@@ -98,23 +161,12 @@ export function ChatGPTPromptInput({
 					{images.length > 0 && (
 						<div className="flex gap-2 mb-2 flex-wrap">
 							{images.map((image, index) => (
-								<div
+								<ImagePreviewItem
 									key={index}
-									className="relative w-20 h-20 rounded-lg overflow-hidden border border-border bg-muted group"
-								>
-									<img
-										src={URL.createObjectURL(image)}
-										alt={`Upload ${index + 1}`}
-										className="w-full h-full object-cover cursor-pointer"
-										onClick={() => setSelectedImage(image)}
-									/>
-									<button
-										onClick={() => removeImage(index)}
-										className="absolute top-1 right-1 w-5 h-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-									>
-										<X className="w-3 h-3" />
-									</button>
-								</div>
+									image={image}
+									onRemove={() => removeImage(index)}
+									onClick={() => setSelectedImage(image)}
+								/>
 							))}
 						</div>
 					)}
@@ -384,13 +436,7 @@ export function ChatGPTPromptInput({
 								<Dialog.Close className="absolute top-4 right-4 w-8 h-8 rounded-full bg-muted hover:bg-muted/80 flex items-center justify-center transition-colors">
 									<X className="w-4 h-4" />
 								</Dialog.Close>
-								{selectedImage && (
-									<img
-										src={URL.createObjectURL(selectedImage)}
-										alt="Preview"
-										className="w-full h-full object-contain rounded-lg"
-									/>
-								)}
+								{selectedImage && <LargeImagePreview image={selectedImage} />}
 							</div>
 						</Dialog.Content>
 					</Dialog.Portal>

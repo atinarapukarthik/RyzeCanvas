@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Image from "next/image";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
@@ -172,9 +173,7 @@ const MicIcon = (props: React.SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
-const toolsList = [
-  { id: "searchWeb", name: "Search in web", shortName: "Web", icon: GlobeIcon },
-];
+// toolsList removed - unused
 
 // Fallback models if API fetch fails
 const PROMPTBOX_FALLBACK_MODELS: AIModel[] = [
@@ -222,7 +221,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
           if (cancelled) return;
           if (data.models && data.models.length > 0) {
             setModels(
-              data.models.map((m: any) => ({
+              data.models.map((m: { id: string; name: string; provider: string }) => ({
                 id: m.id,
                 name: m.name,
                 provider: m.provider as AIProvider,
@@ -356,7 +355,14 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
           <Dialog open={isImageDialogOpen} onOpenChange={setIsImageDialogOpen}>
             <div className="relative mb-1 w-fit rounded-[1rem] px-1 pt-1">
               <button type="button" className="transition-transform" onClick={() => setIsImageDialogOpen(true)}>
-                <img src={imagePreview} alt="Image preview" className="h-14 w-14 rounded-[1rem] object-cover" />
+                <Image
+                  src={imagePreview}
+                  alt="Image preview"
+                  width={56}
+                  height={56}
+                  className="h-14 w-14 rounded-[1rem] object-cover"
+                  unoptimized
+                />
               </button>
               <button
                 onClick={handleRemoveImage}
@@ -367,7 +373,14 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
               </button>
             </div>
             <DialogContent>
-              <img src={imagePreview} alt="Full size preview" className="w-full max-h-[95vh] object-contain rounded-[24px]" />
+              <Image
+                src={imagePreview}
+                alt="Full size preview"
+                width={1200}
+                height={800}
+                className="w-full max-h-[95vh] object-contain rounded-[24px]"
+                unoptimized
+              />
             </DialogContent>
           </Dialog>
         )}

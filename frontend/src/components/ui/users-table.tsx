@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useTheme } from "next-themes";
-import { User, Mail, Calendar, Shield, Crown, Activity } from "lucide-react";
+import { User, Mail, Calendar, Crown } from "lucide-react";
 
 export interface UserData {
 	id: string;
@@ -90,9 +90,15 @@ export function UsersTable({
 }: UsersTableProps = {}) {
 	const users = initialUsers;
 	const [selectedUser, setSelectedUser] = useState<string | null>("1");
-	const [mounted, setMounted] = useState(true);
+	const [mounted, setMounted] = useState(false);
 	const shouldReduceMotion = useReducedMotion();
 	const { theme } = useTheme();
+
+	useEffect(() => {
+		// eslint-disable-next-line react-hooks/set-state-in-effect
+		setMounted(true);
+	}, []);
+
 	const isDark = theme === "dark";
 
 	const handleUserSelect = (userId: string) => {

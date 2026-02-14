@@ -10,11 +10,11 @@ export default function AuthLayout({
     children: React.ReactNode;
 }) {
     return (
-        <div className="min-h-screen mesh-gradient flex items-center justify-center p-4 selection:bg-primary/30 relative overflow-hidden">
+        <div className="min-h-screen bg-background flex items-center justify-center p-4 relative overflow-hidden">
             {/* Ambient glow orbs */}
             <div className="pointer-events-none absolute inset-0">
-                <div className="absolute top-1/4 left-1/4 h-[500px] w-[500px] rounded-full bg-[hsl(var(--aurora-1)/0.08)] blur-[120px]" />
-                <div className="absolute bottom-1/4 right-1/4 h-[400px] w-[400px] rounded-full bg-[hsl(var(--aurora-2)/0.06)] blur-[100px]" />
+                <div className="absolute top-1/4 left-1/4 h-[500px] w-[500px] rounded-full bg-primary/5 blur-[120px]" />
+                <div className="absolute bottom-1/4 right-1/4 h-[400px] w-[400px] rounded-full bg-accent/5 blur-[100px]" />
             </div>
 
             <motion.div
@@ -32,7 +32,7 @@ export default function AuthLayout({
                 </Link>
 
                 {/* Card */}
-                <div className="rounded-2xl border border-[hsl(var(--glass-border)/0.4)] bg-[hsl(var(--glass-bg)/0.7)] backdrop-blur-2xl p-8 shadow-2xl shadow-black/20">
+                <div className="rounded-2xl border border-border bg-card shadow-xl shadow-black/5 p-8">
                     {children}
                 </div>
 

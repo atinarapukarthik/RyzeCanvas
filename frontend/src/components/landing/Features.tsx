@@ -108,7 +108,7 @@ function BentoCard({
                 onMouseMove={handleMouseMove}
                 onMouseEnter={() => setIsHovered(true)}
                 onMouseLeave={() => setIsHovered(false)}
-                className="relative h-full overflow-hidden rounded-2xl border border-white/[0.04] bg-white/[0.02] backdrop-blur-sm p-7 md:p-8 transition-all duration-500 hover:border-white/[0.08] hover:bg-white/[0.035]"
+                className="relative h-full overflow-hidden rounded-2xl border border-border/50 bg-card/30 backdrop-blur-sm p-7 md:p-8 transition-all duration-500 hover:border-border hover:bg-card/50"
             >
                 {/* Spotlight – radial gradient follows the cursor */}
                 <div
@@ -139,7 +139,7 @@ function BentoCard({
 
                 {/* Icon */}
                 <div className="relative mb-5">
-                    <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.04] group-hover:border-white/[0.08] transition-colors duration-300">
+                    <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-accent/20 border border-border/50 group-hover:border-border transition-colors duration-300">
                         <feature.icon
                             className={`h-5 w-5 ${feature.iconColor} transition-transform duration-500 group-hover:scale-110`}
                         />
@@ -156,7 +156,7 @@ function BentoCard({
 
                 {/* Bottom line */}
                 <motion.div
-                    className="relative mt-6 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent"
+                    className="relative mt-6 h-px bg-gradient-to-r from-transparent via-border to-transparent"
                     initial={{ scaleX: 0 }}
                     whileInView={{ scaleX: 1 }}
                     viewport={{ once: true }}
@@ -179,7 +179,7 @@ export function Features() {
                     className="absolute top-1/4 left-1/3 w-[500px] h-[500px] rounded-full opacity-[0.04]"
                     style={{
                         background:
-                            "radial-gradient(circle, hsl(var(--aurora-1)), transparent 70%)",
+                            "radial-gradient(circle, hsl(var(--primary)), transparent 70%)",
                         filter: "blur(80px)",
                     }}
                     animate={{
@@ -204,7 +204,7 @@ export function Features() {
                     transition={{ duration: 0.5 }}
                 >
                     <motion.div
-                        className="inline-flex items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.03] px-4 py-1.5 text-xs font-medium text-foreground/50 mb-6"
+                        className="inline-flex items-center gap-2 rounded-full border border-border bg-accent/30 px-4 py-1.5 text-xs font-medium text-foreground/50 mb-6"
                         initial={{ opacity: 0, y: 8 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
@@ -216,7 +216,7 @@ export function Features() {
 
                     <h2 className="font-display text-4xl sm:text-5xl font-bold tracking-tight text-foreground mb-5">
                         Everything you need to{" "}
-                        <span className="gradient-text">ship faster</span>
+                        <span className="bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent">ship faster</span>
                     </h2>
                     <p className="text-foreground/40 max-w-xl mx-auto text-lg leading-relaxed">
                         A complete AI-powered toolkit for generating, previewing,

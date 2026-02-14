@@ -87,7 +87,7 @@ export function SocialProof() {
                         viewport={{ once: true }}
                         transition={{ delay: 0.3 + i * 0.07 }}
                     >
-                        <div className="font-display text-3xl md:text-4xl font-bold tracking-tight gradient-text mb-1">
+                        <div className="font-display text-3xl md:text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent mb-1">
                             {stat.value}
                         </div>
                         <div className="text-xs text-foreground/35 font-medium uppercase tracking-wider">

@@ -1,15 +1,13 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/stores/authStore';
 import { adminFetchUsers, adminDeleteUser, type User } from '@/lib/api';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
 import {
-    Zap, Users, Activity, Server, Pencil, Trash2, LogOut, ArrowLeft
+    Users, Activity, Server, Pencil, Trash2
 } from 'lucide-react';
 
 function StatCard({ icon: Icon, label, value, color }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string; color: string }) {
@@ -31,8 +29,7 @@ function StatCard({ icon: Icon, label, value, color }: { icon: React.ComponentTy
 }
 
 export default function AdminPage() {
-    const { user, isAuthenticated, logout } = useAuthStore();
-    const router = useRouter();
+    const { user, isAuthenticated } = useAuthStore();
     const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
 

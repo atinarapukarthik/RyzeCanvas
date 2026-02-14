@@ -15,8 +15,8 @@ module.exports = {
         },
         extend: {
             fontFamily: {
-                display: ["var(--font-display)", "system-ui", "sans-serif"],
-                body: ["var(--font-body)", "system-ui", "sans-serif"],
+                display: ["Inter", "system-ui", "sans-serif"],
+                body: ["Inter", "system-ui", "sans-serif"],
             },
             colors: {
                 border: "hsl(var(--border))",
@@ -69,10 +69,10 @@ module.exports = {
                 },
             },
             boxShadow: {
-                "glow-sm": "0 0 20px -5px hsl(234 89% 74% / 0.3), 0 0 40px -10px hsl(280 72% 68% / 0.15)",
-                glow: "0 0 30px -5px hsl(234 89% 74% / 0.4), 0 0 60px -10px hsl(280 72% 68% / 0.2)",
-                "glow-lg": "0 0 40px -5px hsl(234 89% 74% / 0.5), 0 0 80px -10px hsl(280 72% 68% / 0.25)",
-                "glow-accent": "0 0 30px -5px hsl(280 72% 68% / 0.4), 0 0 60px -10px hsl(234 89% 74% / 0.2)",
+                "glow-sm": "0 0 20px -5px hsl(var(--primary) / 0.3), 0 0 40px -10px hsl(var(--accent) / 0.15)",
+                glow: "0 0 30px -5px hsl(var(--primary) / 0.4), 0 0 60px -10px hsl(var(--accent) / 0.2)",
+                "glow-lg": "0 0 40px -5px hsl(var(--primary) / 0.5), 0 0 80px -10px hsl(var(--accent) / 0.25)",
+                "glow-accent": "0 0 30px -5px hsl(var(--accent) / 0.4), 0 0 60px -10px hsl(var(--primary) / 0.2)",
             },
             borderRadius: {
                 lg: "var(--radius)",

@@ -97,9 +97,10 @@ Your response MUST follow this structure:
 2. **Component Breakdown**: List the major components/sections needed
 3. **Layout Strategy**: Describe flexbox/grid approach and responsive behavior
 4. **Visual Style**: Color palette, typography, spacing patterns
-5. **Implementation Steps**: Numbered list of concrete steps to build it (3-6 steps)
+5. **Tools & Libraries**: List the specific tools you will use (e.g., Lucide React, Tailwind, generic HTML5 APIs)
+6. **Implementation Steps**: Numbered list of concrete steps (1., 2., 3., ...). THIS IS CRITICAL for the todo list.
 
-Keep each section brief (1-3 lines). Focus on actionable detail, not generic advice.
+Keep each section brief (1-3 lines). Focus on actionable detail.
 Do NOT output any code — only the plan in natural language.
 </plan-format>"""
 
@@ -123,11 +124,24 @@ Your output will be:
 The USER will handle installation and building. You just write the code.
 </critical-instructions>
 
-<task>
-Generate a COMPLETE, PRODUCTION-READY React/Next.js project structure with Tailwind CSS based on the user's request.
-You MUST create the full project scaffolding including all configuration files, not just component code.
+<available-tools>
+You have access to the following pre-installed modern frontend tools:
+- **React 18+**: Functional components, Hooks (useState, useEffect, useContext, useReducer, useRef, useMemo, useCallback).
+- **Tailwind CSS**: Full utility-first CSS framework for layout, styling, animations, and responsive design.
+- **Lucide React**: Complete icon set. Import as `import {{ Menu, Home }} from 'lucide-react';`.
+- **date-fns**: For robust date manipulation if needed.
+- **clsx / tailwind-merge**: For conditional class merging.
 
-Output the code files in JSON format below. That's ALL you need to do.
+*Note: You do NOT need to run `npm install` for these. They are available in the environment.*
+</available-tools>
+
+<task>
+1. **Analyze**: Review the user's request and the generated plan.
+2. **Check**: Verify you have all necessary imports and that no components are referenced without definition.
+3. **Generate**: Create a COMPLETE, PRODUCTION-READY React/Next.js project structure with Tailwind CSS.
+4. **Validate**: Ensure all syntax is correct and ALL files are included.
+
+Output the code files in JSON format below.
 </task>
 
 <output-format>
@@ -230,6 +244,14 @@ For Next.js projects, include these files:
 12. CRITICAL: NEVER delete or remove files. When modifying an existing project, only ADD new files or MODIFY existing ones. Preserve all existing files.
 13. CRITICAL: Output ONLY the JSON object — no markdown fences, no commentary, no explanations, no commands
 14. FOCUS ONLY on generating complete, correct code JSON structure
+15. CRITICAL: When modifying existing code, preserve ALL existing features, styling, and functionality. Only change what the user specifically asked for. Copy unchanged files exactly as-is.
+16. CRITICAL: Each component must define ALL sub-components inline. If App.tsx uses a HeroSection, the HeroSection must be defined in src/components/HeroSection.tsx AND imported properly.
+17. CRITICAL: SELF-CORRECTION — Before outputting, check:
+    - Did I define all components I used?
+    - Did I import all icons from lucide-react?
+    - Did I close all tags and brackets?
+    - Did I follow the "Implementation Steps" from the plan?
+18. CRITICAL: Avoid ReferenceErrors in `.map()` loops. Ensure that if you use `item.price`, the variable `item` is either defined in the scope or correctly destructured as `({{ price }}) => ...`. Never reference a variable that hasn't been extracted from its parent object.
 </rules>
 
 <production-quality-skills>

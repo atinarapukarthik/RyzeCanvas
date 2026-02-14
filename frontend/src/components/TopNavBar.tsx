@@ -8,7 +8,6 @@ import { useRouter, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ProviderSelector } from "@/components/ProviderSelector";
 import { useUIStore } from "@/stores/uiStore";
-import { fetchProjects } from "@/lib/api";
 import { toast } from "sonner";
 import Link from "next/link";
 
@@ -24,7 +23,7 @@ export function TopNavBar() {
   const logout = useAuthStore((s) => s.logout);
   const router = useRouter();
   const pathname = usePathname();
-  const { githubConnected, setGithubConnected, selectedModel, setSelectedModel, githubModal, setGithubModal } = useUIStore();
+  const { githubConnected, setGithubConnected, selectedModel, setSelectedModel, setGithubModal } = useUIStore();
 
   const isStudio = pathname === "/studio";
   const isAdmin = pathname === "/admin";

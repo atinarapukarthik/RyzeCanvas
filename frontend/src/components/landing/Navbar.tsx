@@ -31,8 +31,8 @@ export function Navbar() {
             <div className="mx-auto max-w-6xl px-4 pt-4">
                 <nav
                     className={`relative flex items-center justify-between rounded-2xl border px-5 py-3 transition-all duration-500 ${scrolled
-                            ? "border-white/[0.06] bg-background/70 backdrop-blur-2xl shadow-[0_8px_32px_-8px_rgba(0,0,0,0.5)]"
-                            : "border-transparent bg-transparent"
+                        ? "border-border bg-background/80 backdrop-blur-2xl shadow-sm"
+                        : "border-transparent bg-transparent"
                         }`}
                 >
                     {/* Logo */}
@@ -52,7 +52,7 @@ export function Navbar() {
                             <Link
                                 key={link.label}
                                 href={link.href}
-                                className="relative px-4 py-2 text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground rounded-xl hover:bg-white/[0.04]"
+                                className="relative px-4 py-2 text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground rounded-xl hover:bg-accent/50"
                             >
                                 {link.label}
                             </Link>
@@ -87,7 +87,7 @@ export function Navbar() {
                     {/* Mobile menu toggle */}
                     <button
                         onClick={() => setMobileOpen(!mobileOpen)}
-                        className="md:hidden flex h-9 w-9 items-center justify-center rounded-xl text-foreground/70 transition-colors hover:bg-white/[0.06]"
+                        className="md:hidden flex h-9 w-9 items-center justify-center rounded-xl text-foreground/70 transition-colors hover:bg-accent/50"
                         aria-label="Toggle menu"
                     >
                         {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -102,7 +102,7 @@ export function Navbar() {
                             animate={{ opacity: 1, height: "auto" }}
                             exit={{ opacity: 0, height: 0 }}
                             transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-                            className="mt-2 overflow-hidden rounded-2xl border border-white/[0.06] bg-background/80 backdrop-blur-2xl md:hidden"
+                            className="mt-2 overflow-hidden rounded-2xl border border-border bg-background/80 backdrop-blur-2xl md:hidden"
                         >
                             <div className="flex flex-col gap-1 p-3">
                                 {navLinks.map((link, i) => (
@@ -115,13 +115,13 @@ export function Navbar() {
                                         <Link
                                             href={link.href}
                                             onClick={() => setMobileOpen(false)}
-                                            className="block rounded-xl px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground"
+                                            className="block rounded-xl px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
                                         >
                                             {link.label}
                                         </Link>
                                     </motion.div>
                                 ))}
-                                <div className="mt-2 border-t border-white/[0.06] pt-3 flex flex-col gap-2">
+                                <div className="mt-2 border-t border-border pt-3 flex flex-col gap-2">
                                     <Link
                                         href="/login"
                                         onClick={() => setMobileOpen(false)}

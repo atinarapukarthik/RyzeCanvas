@@ -23,14 +23,11 @@ export interface AIModel {
 
 // Static fallback models (used if API fetch fails)
 const FALLBACK_MODELS: AIModel[] = [
-    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "gemini" },
-    { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "gemini" },
+    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", provider: "gemini" },
+    { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", provider: "gemini" },
+    { id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash (Exp)", provider: "gemini" },
     { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", provider: "claude" },
-    { id: "claude-3-opus-20240229", name: "Claude 3 Opus", provider: "claude" },
     { id: "gpt-4o", name: "GPT-4o", provider: "openai" },
-    { id: "anthropic/claude-3.5-sonnet", name: "Claude 3.5 Sonnet (via OR)", provider: "openrouter" },
-    { id: "meta-llama/llama-3-70b-instruct", name: "Llama 3 70B (via OR)", provider: "openrouter" },
-    { id: "llama3", name: "Llama 3 (Local)", provider: "ollama" },
 ];
 
 const PROVIDER_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -55,7 +52,7 @@ interface ProviderSelectorProps {
 }
 
 export function ProviderSelector({ selectedModelId, onSelectModel }: ProviderSelectorProps) {
-    const [models, setModels] = useState<AIModel[]>(FALLBACK_MODELS);
+    const [models, setModels] = useState<AIModel[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {

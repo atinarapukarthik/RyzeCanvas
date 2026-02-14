@@ -1,0 +1,115 @@
+﻿
+> frontend@1.0.0 lint
+> eslint
+
+
+D:\RyzeCanvas\frontend\src\app\(dashboard)\settings\page.tsx
+  12:15  warning  'AIModel' is defined but never used  @typescript-eslint/no-unused-vars
+
+D:\RyzeCanvas\frontend\src\app\(dashboard)\studio\page.tsx
+     9:10  warning  'useAuthStore' is defined but never used                                                                                                                                                  @typescript-eslint/no-unused-vars
+   480:12  warning  'framework' is assigned a value but never used                                                                                                                                            @typescript-eslint/no-unused-vars
+   480:23  warning  'setFramework' is assigned a value but never used                                                                                                                                         @typescript-eslint/no-unused-vars
+   503:12  warning  'previewFileQueue' is assigned a value but never used                                                                                                                                     @typescript-eslint/no-unused-vars
+   503:30  warning  'setPreviewFileQueue' is assigned a value but never used                                                                                                                                  @typescript-eslint/no-unused-vars
+   506:30  warning  'setPreviousAllFiles' is assigned a value but never used                                                                                                                                  @typescript-eslint/no-unused-vars
+   515:56  error    Unexpected any. Specify a different type                                                                                                                                                  @typescript-eslint/no-explicit-any
+   644:34  warning  'e' is defined but never used                                                                                                                                                             @typescript-eslint/no-unused-vars
+   733:22  warning  'e' is defined but never used                                                                                                                                                             @typescript-eslint/no-unused-vars
+   759:8   warning  React Hook useEffect has missing dependencies: 'getContextId', 'projectId', and 'searchParams'. Either include them or remove the dependency array                                        react-hooks/exhaustive-deps
+   785:22  warning  'e' is defined but never used                                                                                                                                                             @typescript-eslint/no-unused-vars
+   798:8   warning  React Hook useEffect has a missing dependency: 'getContextId'. Either include it or remove the dependency array                                                                           react-hooks/exhaustive-deps
+   806:8   warning  React Hook useEffect has a missing dependency: 'getContextId'. Either include it or remove the dependency array                                                                           react-hooks/exhaustive-deps
+   818:8   warning  React Hook useEffect has a missing dependency: 'getContextId'. Either include it or remove the dependency array                                                                           react-hooks/exhaustive-deps
+   826:8   warning  React Hook useEffect has a missing dependency: 'getContextId'. Either include it or remove the dependency array                                                                           react-hooks/exhaustive-deps
+   910:11  warning  The 'handleSend' function makes the dependencies of useEffect Hook (at line 1249) change on every render. To fix this, wrap the definition of 'handleSend' in its own useCallback() Hook  react-hooks/exhaustive-deps
+  1022:95  error    Unexpected any. Specify a different type                                                                                                                                                  @typescript-eslint/no-explicit-any
+  1078:64  error    Unexpected any. Specify a different type                                                                                                                                                  @typescript-eslint/no-explicit-any
+  1081:52  error    Unexpected any. Specify a different type                                                                                                                                                  @typescript-eslint/no-explicit-any
+  1143:31  warning  'fileCount' is assigned a value but never used                                                                                                                                            @typescript-eslint/no-unused-vars
+  1437:64  error    Unexpected any. Specify a different type                                                                                                                                                  @typescript-eslint/no-explicit-any
+  1440:52  error    Unexpected any. Specify a different type                                                                                                                                                  @typescript-eslint/no-explicit-any
+  2792:66  warning  'idx' is defined but never used                                                                                                                                                           @typescript-eslint/no-unused-vars
+
+D:\RyzeCanvas\frontend\src\components\GitHubConnect.tsx
+  4:27  warning  'Check' is defined but never used  @typescript-eslint/no-unused-vars
+
+D:\RyzeCanvas\frontend\src\components\TopNavBar.tsx
+  11:10  warning  'fetchProjects' is defined but never used         @typescript-eslint/no-unused-vars
+  27:81  warning  'githubModal' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+D:\RyzeCanvas\frontend\src\components\landing\Hero.tsx
+   4:18  warning  'useScroll' is defined but never used     @typescript-eslint/no-unused-vars
+   4:29  warning  'useTransform' is defined but never used  @typescript-eslint/no-unused-vars
+   5:22  warning  'Check' is defined but never used         @typescript-eslint/no-unused-vars
+  67:39  warning  'idx' is defined but never used           @typescript-eslint/no-unused-vars
+
+D:\RyzeCanvas\frontend\src\components\ui\chart.tsx
+  63:55  warning  '_' is defined but never used  @typescript-eslint/no-unused-vars
+
+D:\RyzeCanvas\frontend\src\components\ui\chatgpt-prompt-input.tsx
+  10:11  warning  'ImageIcon' is defined but never used                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+  54:4   warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  82:3   warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+D:\RyzeCanvas\frontend\src\components\ui\clean-minimal-sign-in.tsx
+  5:10  warning  'LogIn' is defined but never used  @typescript-eslint/no-unused-vars
+
+D:\RyzeCanvas\frontend\src\components\ui\clean-minimal-sign-up.tsx
+  5:10  warning  'UserPlus' is defined but never used  @typescript-eslint/no-unused-vars
+
+D:\RyzeCanvas\frontend\src\components\ui\file-viewer.tsx
+   17:2   warning  'ExternalLink' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+  115:13  warning  'error' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+  166:2   warning  'component' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+  384:17  error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+D:\RyzeCanvas\frontend\src\components\ui\file-viewer.tsx:384:17
+  382 |
+  383 | 	useEffect(() => {
+> 384 | 		if (elements) setExpandedItems(getAllExpandableItems(elements));
+      | 		              ^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  385 | 	}, [elements, getAllExpandableItems]);
+  386 |
+  387 | 	return (  react-hooks/set-state-in-effect
+  529:30  error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-explicit-any
+  549:40  error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-explicit-any
+  550:34  error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-explicit-any
+  560:4   error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+D:\RyzeCanvas\frontend\src\components\ui\file-viewer.tsx:560:4
+  558 | 	useEffect(() => {
+  559 | 		if (!selectedFile && files.length > 0) {
+> 560 | 			setSelectedFile(files[0].path);
+      | 			^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  561 | 		}
+  562 | 	}, [files, selectedFile]);
+  563 |                        react-hooks/set-state-in-effect
+
+D:\RyzeCanvas\frontend\src\components\ui\forgot-password.tsx
+  5:10  warning  'KeyRound' is defined but never used  @typescript-eslint/no-unused-vars
+
+D:\RyzeCanvas\frontend\src\components\ui\prompt-box.tsx
+  175:7   warning  'toolsList' is assigned a value but never used                                                                                                                                                                                                                                           @typescript-eslint/no-unused-vars
+  225:35  error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  359:17  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  370:15  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+D:\RyzeCanvas\frontend\src\components\ui\users-table.tsx
+  6:32  warning  'Shield' is defined but never used    @typescript-eslint/no-unused-vars
+  6:47  warning  'Activity' is defined but never used  @typescript-eslint/no-unused-vars
+
+Γ£û 52 problems (12 errors, 40 warnings)
+

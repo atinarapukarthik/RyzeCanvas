@@ -392,12 +392,12 @@ async def list_available_models():
     # Gemini models
     if settings.GEMINI_API_KEY:
         gemini_models = [
-            {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash",
+            {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash",
                 "provider": "gemini", "description": "Fast and efficient"},
-            {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro",
+            {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro",
                 "provider": "gemini", "description": "Most capable Gemini"},
-            {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash",
-                "provider": "gemini", "description": "Previous generation fast model"},
+            {"id": "gemini-2.0-flash-exp", "name": "Gemini 2.0 Flash (Exp)",
+                "provider": "gemini", "description": "Next-gen fast model"},
         ]
         providers.append({"id": "gemini", "name": "Google Gemini",
                          "configured": True, "icon": "sparkles"})

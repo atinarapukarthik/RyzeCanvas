@@ -10,6 +10,7 @@ Supports Server-Sent Events (SSE) for real-time streaming to the frontend.
 """
 import json
 import asyncio
+import logging
 from typing import AsyncGenerator, Dict, Any, Optional, Literal
 from dataclasses import dataclass, field
 
@@ -17,6 +18,10 @@ from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("orchestrator")
 
 from app.core.config import settings
 from app.agent.system_prompt import (
@@ -254,31 +259,41 @@ async def orchestrate_chat(request: ChatRequest) -> AsyncGenerator[str, None]:
 
     Yields SSE-formatted strings for real-time streaming.
     """
+    logger.info(f"Starting orchestration: mode={request.mode}, provider={request.provider}, model={request.model}")
     try:
         llm = _get_llm(request.provider, request.model)
     except ValueError as e:
+        logger.error(f"Failed to initialize LLM: {str(e)}")
         yield _sse_event(EVENT_ERROR, str(e))
         yield _sse_event(EVENT_DONE, {"success": False})
         return
 
     if request.mode == "chat":
+        logger.info("Routing to chat handler")
         async for event in _handle_chat(llm, request):
             yield event
     elif request.mode == "plan":
+        logger.info("Routing to plan handler")
         async for event in _handle_plan(llm, request):
             yield event
     elif request.mode == "generate":
+        logger.info("Routing to generate handler")
         async for event in _handle_generate(llm, request):
             yield event
     elif request.mode == "plan_interactive":
+        logger.info("Routing to plan_interactive handler")
         async for event in _handle_plan_interactive(llm, request):
             yield event
     elif request.mode == "plan_implement":
+        logger.info("Routing to plan_implement handler")
         async for event in _handle_plan_implement(llm, request):
             yield event
     else:
+        logger.warning(f"Unknown mode requested: {request.mode}")
         yield _sse_event(EVENT_ERROR, f"Unknown mode: {request.mode}")
         yield _sse_event(EVENT_DONE, {"success": False})
+    
+    logger.info(f"Orchestration complete: mode={request.mode}")
 
 
 # ── CHAT MODE ────────────────────────────────────────────────────
@@ -566,6 +581,7 @@ async def _handle_generate(llm, request: ChatRequest) -> AsyncGenerator[str, Non
     has_existing = bool(request.existing_code)
 
     # ── Step 1: Planning (context-aware) with structured thinking ──
+    logger.info("Generation Step 1: Planning")
     if has_existing:
         yield _sse_event(EVENT_STEP, "Analyzing existing code...")
         yield _sse_event(EVENT_STEP, "Identifying what needs to change...")
@@ -593,13 +609,16 @@ async def _handle_generate(llm, request: ChatRequest) -> AsyncGenerator[str, Non
             SystemMessage(content=plan_prompt),
             HumanMessage(content=plan_user_msg),
         ]
+        logger.info("Invoking LLM for plan generation")
         plan_response = await llm.ainvoke(plan_messages)
         plan = plan_response.content.strip()
+        logger.info("Plan generated successfully")
         yield _sse_event(EVENT_PLAN, plan)
 
         # Extract implementation steps from the plan and emit as todos
         step_lines = _re.findall(r'^\d+\.\s+(.+)$', plan, _re.MULTILINE)
         if step_lines:
+            logger.info(f"Extracted {len(step_lines)} steps from plan")
             todos = [
                 {"id": f"step_{i+1}", "label": step.strip().rstrip('.'), "status": "pending"}
                 for i, step in enumerate(step_lines[:8])  # Max 8 todos
@@ -609,13 +628,16 @@ async def _handle_generate(llm, request: ChatRequest) -> AsyncGenerator[str, Non
         yield _sse_event(EVENT_STEP, "Plan complete. Generating code...")
     except Exception as e:
         # Planning failed — continue without plan
+        logger.error(f"Planning failed: {str(e)}")
         yield _sse_event(EVENT_STEP, f"Planning skipped: {_format_llm_error(e)}")
 
     # ── Step 2: Generate Code + Validate Loop ──
+    logger.info("Generation Step 2: Code Generation & Validation Loop")
     errors = []
     generated_code = None
 
     for attempt in range(MAX_RETRIES + 1):
+        logger.info(f"Generation attempt {attempt + 1}")
         if attempt == 0:
             yield _sse_event(EVENT_STEP, "Writing React components...")
             yield _sse_event(EVENT_STEP, "Applying Tailwind CSS styling...")
@@ -634,9 +656,15 @@ async def _handle_generate(llm, request: ChatRequest) -> AsyncGenerator[str, Non
         # Build the user message with existing code context
         if has_existing:
             user_content = (
-                f"The user has an existing project. Here is their current code:\n"
+                f"The user has an existing project. Here is their CURRENT code:\n"
                 f"```\n{request.existing_code}\n```\n\n"
                 f"They want to: {request.prompt}\n\n"
+                f"CRITICAL RULES FOR MODIFYING EXISTING CODE:\n"
+                f"1. PRESERVE all files that don't need changes — copy them EXACTLY as-is into your output\n"
+                f"2. Only MODIFY the specific files that need changes for the user's request\n"
+                f"3. Do NOT rewrite or simplify working code — keep the existing quality and features\n"
+                f"4. Do NOT remove features, sections, or styling that already exist unless explicitly asked\n"
+                f"5. When adding new features, integrate them naturally with the existing code\n\n"
                 f"Generate the COMPLETE updated project structure as a JSON object.\n"
                 f"Include ALL files (both modified and unchanged) with file paths as keys and file contents as values.\n"
                 f"Start with {{ immediately. No markdown fences, no explanation."
@@ -654,9 +682,12 @@ async def _handle_generate(llm, request: ChatRequest) -> AsyncGenerator[str, Non
         ]
 
         try:
+            logger.info("Invoking LLM for code generation")
             gen_response = await llm.ainvoke(gen_messages)
             raw_output = gen_response.content.strip()
+            logger.info("Code generation complete")
         except Exception as e:
+            logger.error(f"Code generation failed: {str(e)}")
             yield _sse_event(EVENT_ERROR, f"Code generation failed: {_format_llm_error(e)}")
             yield _sse_event(EVENT_DONE, {"success": False})
             return
@@ -670,12 +701,14 @@ async def _handle_generate(llm, request: ChatRequest) -> AsyncGenerator[str, Non
         is_valid, error = _validate_code(generated_code)
 
         if is_valid:
+            logger.info("Code validation passed")
             yield _sse_event(EVENT_STEP, "All validations passed!")
             yield _sse_event(EVENT_STEP, "Preparing preview...")
             async for event in _emit_generated_code(generated_code, attempt):
                 yield event
             return
         else:
+            logger.warning(f"Code validation failed: {error}")
             errors.append(error)
             yield _sse_event(EVENT_STEP, f"Found issue: {error}")
             yield _sse_event(EVENT_STEP, "Analyzing error and regenerating...")

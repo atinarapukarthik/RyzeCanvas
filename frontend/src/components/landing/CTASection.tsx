@@ -10,28 +10,28 @@ export function CTASection() {
             {/* Ambient aurora */}
             <div className="absolute inset-0 pointer-events-none">
                 <motion.div
-                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[500px] rounded-full opacity-[0.07]"
+                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[500px] rounded-full opacity-[0.03]"
                     style={{
-                        background: "radial-gradient(ellipse, hsl(var(--aurora-1)), transparent 70%)",
+                        background: "radial-gradient(ellipse, hsl(var(--primary)), transparent 70%)",
                         filter: "blur(100px)",
                     }}
-                    animate={{ scale: [1, 1.12, 1], opacity: [0.07, 0.12, 0.07] }}
+                    animate={{ scale: [1, 1.12, 1], opacity: [0.03, 0.08, 0.03] }}
                     transition={{ repeat: Infinity, duration: 12, ease: "easeInOut" }}
                 />
                 <motion.div
-                    className="absolute top-1/3 right-1/4 w-[400px] h-[400px] rounded-full opacity-[0.04]"
+                    className="absolute top-1/3 right-1/4 w-[400px] h-[400px] rounded-full opacity-[0.02]"
                     style={{
-                        background: "radial-gradient(ellipse, hsl(var(--aurora-2)), transparent 70%)",
+                        background: "radial-gradient(ellipse, hsl(var(--accent)), transparent 70%)",
                         filter: "blur(80px)",
                     }}
-                    animate={{ scale: [1.1, 1, 1.1], opacity: [0.04, 0.08, 0.04] }}
+                    animate={{ scale: [1.1, 1, 1.1], opacity: [0.02, 0.06, 0.02] }}
                     transition={{ repeat: Infinity, duration: 16, ease: "easeInOut" }}
                 />
             </div>
 
             <div className="relative z-10 max-w-4xl mx-auto px-4 sm:px-6">
                 <motion.div
-                    className="relative rounded-3xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm overflow-hidden"
+                    className="relative rounded-3xl border border-border/50 bg-card/30 backdrop-blur-sm overflow-hidden"
                     initial={{ opacity: 0, y: 40 }}
                     whileInView={{ opacity: 1, y: 0 }}
                     viewport={{ once: true }}
@@ -51,7 +51,7 @@ export function CTASection() {
                             transition={{ delay: 0.1 }}
                         >
                             Ready to build{" "}
-                            <span className="gradient-text">10x faster</span>?
+                            <span className="bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent">10x faster</span>?
                         </motion.h2>
 
                         {/* Sub */}
@@ -82,7 +82,7 @@ export function CTASection() {
                             </Link>
                             <Link
                                 href="#features"
-                                className="inline-flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.02] px-8 py-3.5 text-sm font-medium text-foreground/70 backdrop-blur-sm transition-all duration-300 hover:border-white/[0.12] hover:bg-white/[0.04] hover:text-foreground"
+                                className="inline-flex items-center gap-2 rounded-xl border border-border bg-card/50 px-8 py-3.5 text-sm font-medium text-foreground/70 backdrop-blur-sm transition-all duration-300 hover:border-border/80 hover:bg-card hover:text-foreground"
                             >
                                 View Documentation
                             </Link>

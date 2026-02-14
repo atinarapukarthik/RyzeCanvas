@@ -1,0 +1,31 @@
+﻿
+> frontend@1.0.0 lint
+> eslint
+
+
+D:\RyzeCanvas\frontend\src\app\(dashboard)\studio\page.tsx
+     3:62  warning  'useMemo' is defined but never used                                                                                                                               @typescript-eslint/no-unused-vars
+   512:30  warning  'setPreviousAllFiles' is assigned a value but never used                                                                                                          @typescript-eslint/no-unused-vars
+   648:34  warning  '_e' is defined but never used                                                                                                                                    @typescript-eslint/no-unused-vars
+   737:22  warning  '_e' is defined but never used                                                                                                                                    @typescript-eslint/no-unused-vars
+   789:22  warning  '_e' is defined but never used                                                                                                                                    @typescript-eslint/no-unused-vars
+  1147:31  warning  'fileCount_val' is assigned a value but never used                                                                                                                @typescript-eslint/no-unused-vars
+  1248:8   warning  React Hook useCallback has missing dependencies: 'allGeneratedFiles', 'previousCode', and 'webSearchEnabled'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  2796:66  warning  'idx' is defined but never used                                                                                                                                   @typescript-eslint/no-unused-vars
+
+D:\RyzeCanvas\frontend\src\components\ui\chatgpt-prompt-input.tsx
+  10:11  warning  'ImageIcon' is defined but never used                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+  54:4   warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  82:3   warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+D:\RyzeCanvas\frontend\src\components\ui\file-viewer.tsx
+   17:2   warning  'ExternalLink' is defined but never used  @typescript-eslint/no-unused-vars
+  115:13  warning  'error' is defined but never used         @typescript-eslint/no-unused-vars
+  166:2   warning  'component' is defined but never used     @typescript-eslint/no-unused-vars
+
+D:\RyzeCanvas\frontend\src\components\ui\prompt-box.tsx
+  357:17  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  368:15  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+Γ£û 16 problems (0 errors, 16 warnings)
+

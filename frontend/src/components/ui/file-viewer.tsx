@@ -14,7 +14,6 @@ import * as AccordionPrimitive from "@radix-ui/react-accordion";
 import {
 	Check,
 	Copy,
-	ExternalLink,
 	FileCode,
 	FileIcon,
 	FolderIcon,
@@ -112,7 +111,7 @@ function ShikiViewer({
 					setHtml(highlightedHtml);
 					setIsLoading(false);
 				}
-			} catch (error) {
+			} catch {
 				if (mounted) {
 					setHtml(`<pre><code>${code}</code></pre>`);
 					setIsLoading(false);
@@ -163,12 +162,10 @@ function ShikiViewer({
 // --- File Header ---
 function FileHeader({
 	file,
-	component,
 	onCopy,
 	copied,
 }: {
 	file: { path: string; content?: string };
-	component: ApiComponent;
 	onCopy: () => void;
 	copied: boolean;
 }) {
@@ -381,6 +378,7 @@ function Tree({
 	}, []);
 
 	useEffect(() => {
+		// eslint-disable-next-line react-hooks/set-state-in-effect
 		if (elements) setExpandedItems(getAllExpandableItems(elements));
 	}, [elements, getAllExpandableItems]);
 
@@ -526,7 +524,7 @@ export default function ComponentFileViewer({
 
 	// Build tree structure
 	const tree = useMemo(() => {
-		const root: Record<string, any> = {};
+		const root: Record<string, any> = {}; // eslint-disable-line @typescript-eslint/no-explicit-any
 		for (const file of files) {
 			const parts = file.path.split("/");
 			let current = root;
@@ -546,9 +544,14 @@ export default function ComponentFileViewer({
 				current = current[part].children || current[part];
 			}
 		}
-		const toArray = (obj: Record<string, any>): TreeViewElement[] =>
-			Object.values(obj).map((item: any) =>
-				item.children ? { ...item, children: toArray(item.children) } : item
+		const toArray = (obj: Record<string, any>): TreeViewElement[] => // eslint-disable-line @typescript-eslint/no-explicit-any
+			Object.values(obj).map((item: any) => // eslint-disable-line @typescript-eslint/no-explicit-any
+				item.children ? {
+					id: item.id,
+					name: item.name,
+					isSelectable: item.isSelectable,
+					children: toArray(item.children)
+				} : (item as TreeViewElement)
 			);
 		return toArray(root);
 	}, [files]);
@@ -557,6 +560,7 @@ export default function ComponentFileViewer({
 
 	useEffect(() => {
 		if (!selectedFile && files.length > 0) {
+			// eslint-disable-next-line react-hooks/set-state-in-effect
 			setSelectedFile(files[0].path);
 		}
 	}, [files, selectedFile]);
@@ -589,7 +593,6 @@ export default function ComponentFileViewer({
 					<div className="h-full flex flex-col">
 						<FileHeader
 							file={selected}
-							component={component}
 							onCopy={handleCopy}
 							copied={copied}
 						/>

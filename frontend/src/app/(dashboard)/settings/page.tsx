@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { useEffect, useState } from "react";
 import { fetchAvailableModels, type AIModelInfo, type AIProviderInfo } from "@/lib/api";
-import type { AIModel, AIProvider } from "@/components/ProviderSelector";
+import type { AIProvider } from "@/components/ProviderSelector";
 
 const PROVIDER_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
     gemini: Sparkles,
