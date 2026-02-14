@@ -1,14 +1,14 @@
 """
 AI Planner Agent for RyzeCanvas.
-Uses LangChain with OpenAI or Anthropic to generate structured UI plans.
+Uses LangChain with OpenAI, Anthropic, or Gemini to generate structured UI plans.
 """
 import json
-import os
 from typing import Dict, Any, Optional
 from pydantic import ValidationError
 
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import JsonOutputParser
 
@@ -46,27 +46,36 @@ class UIPlannerAgent:
         
         # Initialize the appropriate LLM
         if model_provider == "openai":
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OPENAI_API_KEY not found in environment variables")
-            
+            if not settings.OPENAI_API_KEY:
+                raise ValueError("OPENAI_API_KEY not configured")
+
             self.model = ChatOpenAI(
-                model=model_name or "gpt-4o",  # gpt-4o, gpt-4-turbo, gpt-3.5-turbo
+                model=model_name or "gpt-4o",
                 temperature=temperature,
-                api_key=api_key
+                api_key=settings.OPENAI_API_KEY
             )
-        
+
         elif model_provider == "anthropic":
-            api_key = os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
-            
+            if not settings.ANTHROPIC_API_KEY:
+                raise ValueError("ANTHROPIC_API_KEY not configured")
+
             self.model = ChatAnthropic(
-                model=model_name or "claude-3-5-sonnet-20241022",  # claude-3-5-sonnet, claude-3-opus
+                model=model_name or "claude-3-5-sonnet-20241022",
                 temperature=temperature,
-                api_key=api_key
+                api_key=settings.ANTHROPIC_API_KEY
             )
-        
+
+        elif model_provider == "gemini":
+            if not settings.GEMINI_API_KEY:
+                raise ValueError("GEMINI_API_KEY not configured")
+
+            self.model = ChatGoogleGenerativeAI(
+                model=model_name or "gemini-2.5-flash",
+                temperature=temperature,
+                google_api_key=settings.GEMINI_API_KEY,
+                max_output_tokens=4096,
+            )
+
         else:
             raise ValueError(f"Unsupported model_provider: {model_provider}")
         
@@ -186,8 +195,8 @@ def get_planner_agent(
     global _agent_instance
     
     if _agent_instance is None:
-        # Determine provider from env or default to openai
-        provider = model_provider or os.getenv("AI_MODEL_PROVIDER", "openai")
+        # Determine provider from settings
+        provider = model_provider or settings.AI_MODEL_PROVIDER
         
         _agent_instance = UIPlannerAgent(
             model_provider=provider,

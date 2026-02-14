@@ -25,11 +25,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     
     # Frontend Configuration
-    FRONTEND_URL: str = "http://localhost:5173"
+    FRONTEND_URL: str = "http://localhost:3000"
     BACKEND_CORS_ORIGINS: List[str] = []
     
     # AI Configuration
-    AI_MODEL_PROVIDER: str = "openai"
+    AI_MODEL_PROVIDER: str = "gemini"
     OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
     GEMINI_API_KEY: Optional[str] = None

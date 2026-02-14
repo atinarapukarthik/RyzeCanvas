@@ -4,75 +4,7 @@ import Link from "next/link";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 import { useRef } from "react";
-
-/* ---- Aurora Background ---- */
-function AuroraBackground() {
-    return (
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-            {/* Primary aurora blob */}
-            <motion.div
-                className="absolute w-[900px] h-[600px] rounded-full opacity-[0.12]"
-                style={{
-                    background: "radial-gradient(ellipse, hsl(var(--aurora-1)), transparent 70%)",
-                    filter: "blur(100px)",
-                    top: "-15%",
-                    left: "15%",
-                }}
-                animate={{
-                    x: [0, 60, -20, 0],
-                    y: [0, -40, 20, 0],
-                    scale: [1, 1.08, 0.95, 1],
-                }}
-                transition={{ repeat: Infinity, duration: 20, ease: "easeInOut" }}
-            />
-            {/* Accent aurora blob */}
-            <motion.div
-                className="absolute w-[700px] h-[500px] rounded-full opacity-[0.08]"
-                style={{
-                    background: "radial-gradient(ellipse, hsl(var(--aurora-2)), transparent 70%)",
-                    filter: "blur(100px)",
-                    top: "10%",
-                    right: "5%",
-                }}
-                animate={{
-                    x: [0, -50, 30, 0],
-                    y: [0, 30, -20, 0],
-                    scale: [1, 0.95, 1.06, 1],
-                }}
-                transition={{ repeat: Infinity, duration: 25, ease: "easeInOut" }}
-            />
-            {/* Tertiary blob */}
-            <motion.div
-                className="absolute w-[500px] h-[400px] rounded-full opacity-[0.06]"
-                style={{
-                    background: "radial-gradient(ellipse, hsl(var(--aurora-3)), transparent 70%)",
-                    filter: "blur(80px)",
-                    bottom: "5%",
-                    left: "30%",
-                }}
-                animate={{
-                    x: [0, 40, -30, 0],
-                    y: [0, -20, 30, 0],
-                }}
-                transition={{ repeat: Infinity, duration: 18, ease: "easeInOut" }}
-            />
-
-            {/* Spotlight conic gradient */}
-            <div className="absolute inset-0 spotlight opacity-60" />
-
-            {/* Noise grain overlay */}
-            <div className="absolute inset-0 noise opacity-50" style={{ zIndex: 2 }}>
-                <div className="absolute inset-0" />
-            </div>
-
-            {/* Dot grid */}
-            <div className="absolute inset-0 dot-grid opacity-30" />
-
-            {/* Top fade for nav blend */}
-            <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-background to-transparent" />
-        </div>
-    );
-}
+import { Scene } from "@/components/ui/neon-raymarcher";
 
 /* ---- Animated Word Reveal ---- */
 function AnimatedHeadline() {
@@ -104,8 +36,8 @@ function AnimatedHeadline() {
                     <span key={i} className="inline-block overflow-hidden mr-[0.28em]">
                         <motion.span
                             className={`inline-block ${i === line2.length - 1
-                                    ? "bg-gradient-to-r from-primary via-accent to-primary bg-[length:200%_auto] bg-clip-text text-transparent animate-shimmer"
-                                    : "text-foreground/50"
+                                ? "bg-gradient-to-r from-primary via-accent to-primary bg-[length:200%_auto] bg-clip-text text-transparent animate-shimmer"
+                                : "text-foreground/50"
                                 }`}
                             initial={{ y: "110%" }}
                             animate={{ y: 0 }}
@@ -220,17 +152,16 @@ export function Hero() {
         target: sectionRef,
         offset: ["start start", "end start"],
     });
-    const bgY = useTransform(scrollYProgress, [0, 1], ["0%", "30%"]);
 
     return (
         <section
             ref={sectionRef}
             className="relative min-h-screen flex flex-col items-center justify-center pt-32 pb-24 overflow-hidden"
         >
-            {/* Parallax aurora */}
-            <motion.div className="absolute inset-0" style={{ y: bgY }}>
-                <AuroraBackground />
-            </motion.div>
+            {/* Neon Raymarcher Background */}
+            <div className="absolute inset-0">
+                <Scene />
+            </div>
 
             <div className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 w-full">
                 {/* Badge */}

@@ -23,7 +23,7 @@ export const useUIStore = create<UIState>((set) => ({
   setGithubConnected: (connected) => set({ githubConnected: connected }),
   theme: "dark",
   toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
-  selectedModel: { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", provider: "gemini" },
+  selectedModel: { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "gemini" },
   setSelectedModel: (model) => set({ selectedModel: model }),
   githubModal: false,
   setGithubModal: (open) => set({ githubModal: open }),

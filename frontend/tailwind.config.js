@@ -68,6 +68,12 @@ module.exports = {
                     ring: "hsl(var(--sidebar-ring))",
                 },
             },
+            boxShadow: {
+                "glow-sm": "0 0 20px -5px hsl(234 89% 74% / 0.3), 0 0 40px -10px hsl(280 72% 68% / 0.15)",
+                glow: "0 0 30px -5px hsl(234 89% 74% / 0.4), 0 0 60px -10px hsl(280 72% 68% / 0.2)",
+                "glow-lg": "0 0 40px -5px hsl(234 89% 74% / 0.5), 0 0 80px -10px hsl(280 72% 68% / 0.25)",
+                "glow-accent": "0 0 30px -5px hsl(280 72% 68% / 0.4), 0 0 60px -10px hsl(234 89% 74% / 0.2)",
+            },
             borderRadius: {
                 lg: "var(--radius)",
                 md: "calc(var(--radius) - 2px)",

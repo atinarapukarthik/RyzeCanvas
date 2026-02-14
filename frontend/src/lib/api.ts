@@ -1,17 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // ============================================================
-// RyzeCanvas API Layer — Real Implementation
+// RyzeCanvas API Layer
+// Uses HTTP-only cookies for auth (primary) + Bearer header (fallback)
 // ============================================================
-
-
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
 export interface User {
-  id: string; // Backend uses int, but we can treat as string or number. Let's align with backend: id is int. But frontend mocks used string "1".
+  id: string;
   email: string;
   name?: string;
-  full_name?: string; // Backend uses full_name
+  full_name?: string;
   role: "admin" | "user";
   is_active?: boolean;
   created_at?: string;
@@ -19,7 +18,6 @@ export interface User {
   github_token?: string;
 }
 
-// Helper to handle mixed user type from backend vs frontend expectation
 function mapUser(apiUser: Record<string, any>): User {
   return {
     id: apiUser.id.toString(),
@@ -37,15 +35,12 @@ function mapUser(apiUser: Record<string, any>): User {
 export interface Project {
   id: string;
   title: string;
-  prompt: string; // Backend doesn't have prompt in DB? It has title and description. Maybe description stores prompt?
-  // Backend Project: title, description, code_json, user_id, is_public
-  // Frontend Mock: title, prompt, code, userId, userName...
-  // We need to map or adjust. Let's assume description = prompt for now.
-  code: string; // Mapped from code_json
+  prompt: string;
+  code: string;
   userId: string;
   userName?: string;
   createdAt: string;
-  flagged?: boolean; // Not in backend
+  flagged?: boolean;
 }
 
 export interface ChatMessage {
@@ -62,9 +57,9 @@ function mapProject(apiProject: Record<string, any>): Project {
     prompt: apiProject.description || "",
     code: apiProject.code_json || "",
     userId: apiProject.user_id.toString(),
-    userName: apiProject.owner_name, // Optional
+    userName: apiProject.owner_name,
     createdAt: apiProject.created_at,
-    flagged: false, // Default
+    flagged: false,
   };
 }
 
@@ -73,19 +68,69 @@ export interface AuthResponse {
   token: string;
 }
 
-// Helper for headers
-function getHeaders() {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+// Helper for headers — always sends cookies via credentials: "include"
+function getHeaders(): HeadersInit {
   const headers: HeadersInit = {
     "Content-Type": "application/json",
   };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+  // Fallback: also send Bearer token from localStorage if present
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("token");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
   }
   return headers;
 }
 
+// Retry on 401 by attempting a token refresh first
+let isRefreshing = false;
+let refreshPromise: Promise<boolean> | null = null;
+
+async function tryRefreshToken(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (res.ok) {
+      const data = await res.json();
+      // Update localStorage fallback token
+      if (data.access_token && typeof window !== "undefined") {
+        localStorage.setItem("token", data.access_token);
+      }
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
+  if (response.status === 401) {
+    // Try refreshing the token once
+    if (!isRefreshing) {
+      isRefreshing = true;
+      refreshPromise = tryRefreshToken();
+    }
+    const refreshed = await refreshPromise;
+    isRefreshing = false;
+    refreshPromise = null;
+
+    if (!refreshed) {
+      // Refresh failed — clear auth state and redirect to login
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("token");
+        localStorage.removeItem("auth-storage");
+        window.location.href = "/login";
+      }
+      throw new Error("Session expired. Please log in again.");
+    }
+    // Refresh succeeded but we can't easily retry the original request here.
+    // The caller will need to retry. Throw a retryable error.
+    throw new Error("Token refreshed. Please retry.");
+  }
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || `API Error: ${response.statusText}`);
@@ -105,6 +150,7 @@ export async function login(email: string, password: string): Promise<AuthRespon
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formData,
+    credentials: "include",
   });
 
   if (!tokenRes.ok) {
@@ -118,6 +164,7 @@ export async function login(email: string, password: string): Promise<AuthRespon
   // 2. Get User
   const userRes = await fetch(`${API_BASE_URL}/auth/me`, {
     headers: { "Authorization": `Bearer ${token}` },
+    credentials: "include",
   });
 
   if (!userRes.ok) throw new Error("Failed to fetch user profile");
@@ -162,6 +209,7 @@ export async function updateProfile(data: Partial<User> & { password?: string })
     method: "PUT",
     headers: getHeaders(),
     body: JSON.stringify(data),
+    credentials: "include",
   });
   const userData = await handleResponse<Record<string, any>>(res);
   return mapUser(userData);
@@ -173,6 +221,7 @@ export async function updateProfile(data: Partial<User> & { password?: string })
 export async function fetchProjects(): Promise<Project[]> {
   const res = await fetch(`${API_BASE_URL}/projects/`, {
     headers: getHeaders(),
+    credentials: "include",
   });
   const data = await handleResponse<Record<string, any>[]>(res);
   return data.map(mapProject);
@@ -186,13 +235,14 @@ export async function createProject(prompt: string, options?: { code?: string, p
     code_json: options?.code || "// Generated code",
     is_public: false,
     provider: options?.provider || "gemini",
-    model: options?.model || "gemini-1.5-pro"
+    model: options?.model || "gemini-2.5-flash"
   };
 
   const res = await fetch(`${API_BASE_URL}/projects/`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify(payload),
+    credentials: "include",
   });
   const data = await handleResponse<Record<string, any>>(res);
   return mapProject(data);
@@ -209,9 +259,22 @@ export async function updateProject(projectId: string, updates: Partial<{ title:
     method: "PUT",
     headers: getHeaders(),
     body: JSON.stringify(payload),
+    credentials: "include",
   });
   const data = await handleResponse<Record<string, any>>(res);
   return mapProject(data);
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}`, {
+    method: "DELETE",
+    headers: getHeaders(),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to delete project");
+  }
 }
 
 // ---- GitHub ----
@@ -291,6 +354,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
     headers: getHeaders(),
     body: JSON.stringify(payload),
     signal,
+    credentials: "include",
   });
 
   if (!res.ok) {
@@ -407,7 +471,18 @@ export async function uploadFile(file: File): Promise<{ success: boolean; filena
   return handleResponse<{ success: boolean; filename: string; size: number; content_type: string }>(res);
 }
 
-// ---- Legacy/Compat (Mock replacements) ----
+// ---- Legacy/Compat ----
+
+export async function logoutAPI(): Promise<void> {
+  try {
+    await fetch(`${API_BASE_URL}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
+  } catch {
+    // Ignore logout errors — we clear local state anyway
+  }
+}
 
 export async function fetchHistory(): Promise<Project[]> {
   return fetchProjects();

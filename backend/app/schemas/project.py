@@ -20,7 +20,7 @@ class ProjectCreate(ProjectBase):
     code_json: Optional[str] = None  # JSON string
     is_public: bool = False
     provider: Optional[str] = "gemini"
-    model: Optional[str] = "gemini-1.5-pro"
+    model: Optional[str] = "gemini-2.5-flash"
 
 
 # Properties to receive via API on update

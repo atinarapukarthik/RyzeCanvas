@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { TopNavBar } from "@/components/TopNavBar";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
@@ -9,11 +10,14 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children, hideTopNav = false }: AppLayoutProps) {
+  const pathname = usePathname();
+  const isDashboard = pathname === "/dashboard";
+
   return (
     <ProtectedRoute>
-      <div className="h-full flex flex-col w-full">
+      <div className="h-full flex flex-col w-full relative">
         {!hideTopNav && <TopNavBar />}
-        <main className="flex-1 overflow-auto">
+        <main className={isDashboard ? "flex-1 overflow-hidden" : "flex-1 overflow-auto"}>
           {children}
         </main>
       </div>

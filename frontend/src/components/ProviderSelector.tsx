@@ -20,8 +20,8 @@ export interface AIModel {
 }
 
 const MODELS: AIModel[] = [
-    { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", provider: "gemini" },
-    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", provider: "gemini" },
+    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "gemini" },
+    { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "gemini" },
     { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet", provider: "claude" },
     { id: "claude-3-opus", name: "Claude 3 Opus", provider: "claude" },
     { id: "gpt-4o", name: "GPT-4o (via OpenRouter)", provider: "openrouter" },
@@ -30,7 +30,7 @@ const MODELS: AIModel[] = [
     { id: "deepseek-coder", name: "DeepSeek Coder (Local)", provider: "ollama" },
 ];
 
-const PROVIDER_ICONS: Record<AIProvider, React.ElementType> = {
+const PROVIDER_ICONS: Record<AIProvider, React.ComponentType<{ className?: string }>> = {
     gemini: Sparkles,
     claude: Cpu,
     openrouter: Globe,

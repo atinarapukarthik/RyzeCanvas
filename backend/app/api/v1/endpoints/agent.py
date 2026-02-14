@@ -45,30 +45,17 @@ class GenerateUIRequest(BaseModel):
 class GenerateUIResponse(BaseModel):
     """Response schema for UI generation."""
     success: bool
-    plan: Dict[str, Any]
+    code: str
     prompt: str
-    message: str = "UI plan generated successfully"
-    
+    message: str = "Code generated successfully"
+
     class Config:
         json_schema_extra = {
             "example": {
                 "success": True,
                 "prompt": "Create a login screen",
-                "message": "UI plan generated successfully",
-                "plan": {
-                    "components": [
-                        {
-                            "id": "card_login",
-                            "type": "Card",
-                            "props": {"title": "Login"},
-                            "position": {"x": 760, "y": 300}
-                        }
-                    ],
-                    "layout": {
-                        "theme": "light",
-                        "grid": True
-                    }
-                }
+                "message": "Code generated successfully",
+                "code": "import React from 'react';\n\nexport default function LoginPage() { ... }"
             }
         }
 
@@ -103,21 +90,20 @@ class SavePlanResponse(BaseModel):
 @router.post("/generate", response_model=GenerateUIResponse)
 async def generate_ui(
     request: GenerateUIRequest,
-    current_user: User = Depends(get_current_user)
 ):
     """
     Generate a UI plan from a natural language prompt using AI.
-    
+
     **Phase 4 Enhancement:**
     - Uses LangGraph orchestration (Retrieve → Plan → Generate → Validate)
     - RAG-based component retrieval from vector store
     - Strict validation loop (max 3 retries) to prevent hallucinated components
-    
+
     - **prompt**: Natural language description of the desired UI
     - **context**: Optional context for generation (theme, preferences, etc.)
-    
-    **Requires:** Authentication
-    
+
+    **Authentication:** Not required (public access)
+
     **Example:**
     ```json
     {
@@ -144,18 +130,18 @@ async def generate_ui(
                 }
             )
         
-        # Success - extract the validated plan
-        plan = result["output"]
+        # Success - extract the validated code
+        code = result["output"]
         retries = result.get("retries", 0)
-        
-        message = f"Generated {len(plan.get('components', []))} components successfully"
+
+        message = "Code generated successfully"
         if retries > 0:
             message += f" (validated after {retries} retries)"
-        
+
         return GenerateUIResponse(
             success=True,
             prompt=request.prompt,
-            plan=plan,
+            code=code,
             message=message
         )
     
@@ -290,11 +276,11 @@ async def generate_and_save(
             )
         
         plan = result["output"]
-        
+
         # Step 2: Save to project
         save_request = SavePlanRequest(
             project_id=project_id,
-            code_json=plan
+            code_json={"code": plan}
         )
         
         return await save_plan(save_request, db, current_user)
@@ -310,23 +296,24 @@ async def generate_and_save(
 
 
 @router.get("/status")
-async def agent_status(current_user: User = Depends(get_current_user)):
+async def agent_status():
     """
     Check AI agent status and configuration.
-    
+
     **Phase 4:** Shows LangGraph orchestration and RAG status.
-    
-    **Requires:** Authentication
-    
+
+    **Authentication:** Not required (public access)
+
     Returns information about the configured AI provider, model, and RAG system.
     """
-    import os
-    
+    from app.core.config import settings
+
     try:
-        provider = os.getenv("AI_MODEL_PROVIDER", "openai")
-        has_openai = bool(os.getenv("OPENAI_API_KEY"))
-        has_anthropic = bool(os.getenv("ANTHROPIC_API_KEY"))
-        
+        provider = settings.AI_MODEL_PROVIDER
+        has_openai = bool(settings.OPENAI_API_KEY)
+        has_anthropic = bool(settings.ANTHROPIC_API_KEY)
+        has_gemini = bool(settings.GEMINI_API_KEY)
+
         # Try to initialize RAG to check status
         rag_status = "not_initialized"
         try:
@@ -335,17 +322,24 @@ async def agent_status(current_user: User = Depends(get_current_user)):
             rag_status = "operational" if rag.vectorstore else "error"
         except Exception:
             rag_status = "error"
-        
+
+        model_map = {
+            "gemini": "gemini-2.5-flash",
+            "openai": "gpt-4o",
+            "anthropic": "claude-3-5-sonnet-20241022",
+        }
+
         return {
             "status": "operational",
             "phase": "4 - LangGraph Orchestration + RAG",
             "provider": provider,
-            "model": "gpt-4o" if provider == "openai" else "claude-3-5-sonnet-20241022",
+            "model": model_map.get(provider, provider),
             "temperature": 0.3,
             "available_components": len(ALLOWED_COMPONENTS),
-            "api_key_configured": has_openai or has_anthropic,
+            "api_key_configured": has_openai or has_anthropic or has_gemini,
             "openai_configured": has_openai,
             "anthropic_configured": has_anthropic,
+            "gemini_configured": has_gemini,
             "rag_status": rag_status,
             "max_validation_retries": 3,
             "workflow": "Retrieve → Plan → Generate → Validate (with loop)"
@@ -360,11 +354,11 @@ async def agent_status(current_user: User = Depends(get_current_user)):
 
 
 @router.get("/components")
-async def list_components(current_user: User = Depends(get_current_user)):
+async def list_components():
     """
     List all available UI components and their templates.
 
-    **Requires:** Authentication
+    **Authentication:** Not required (public access)
 
     Returns the component library with examples for each component type.
     """
@@ -377,15 +371,14 @@ async def list_components(current_user: User = Depends(get_current_user)):
     }
 
 
-@router.post("/web-search")
+@router.get("/web-search")
 async def search_web(
     query: str = Query(..., min_length=3, description="Search query"),
-    current_user: User = Depends(get_current_user)
 ):
     """
     Search the web using DuckDuckGo for information relevant to UI generation.
 
-    **Requires:** Authentication
+    **Authentication:** Not required (public access)
 
     - **query**: The search query (minimum 3 characters)
 
@@ -502,3 +495,77 @@ async def upload_file(
         "size": file_size,
         "content_type": file.content_type or "application/octet-stream"
     }
+
+
+class TranscriptionResponse(BaseModel):
+    """Response for audio transcription."""
+    success: bool
+    text: str
+    language: Optional[str] = None
+
+
+@router.post("/transcribe", response_model=TranscriptionResponse)
+async def transcribe_audio(
+    audio: UploadFile = File(...),
+):
+    """
+    Transcribe audio using OpenAI's Whisper API.
+
+    **Authentication:** Not required (public access)
+
+    - **audio**: Audio file in WAV, MP3, or OGG format (max 25MB)
+
+    Returns the transcribed text from the audio file.
+    """
+    from app.core.config import settings
+
+    try:
+        # Check if OpenAI API key is configured
+        if not settings.OPENAI_API_KEY:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="OpenAI API key not configured for transcription"
+            )
+
+        # Read audio file
+        content = await audio.read()
+        file_size = len(content)
+
+        # Check file size (OpenAI limit is 25MB)
+        if file_size > 25 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Audio file exceeds 25MB limit"
+            )
+
+        # Use OpenAI Whisper API
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+
+        # Create a file-like object from the audio bytes
+        from io import BytesIO
+        audio_file = BytesIO(content)
+        audio_file.name = audio.filename or "audio.wav"
+
+        # Call Whisper API
+        transcript = await client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(audio_file.name, audio_file, audio.content_type or "audio/wav"),
+        )
+
+        return {
+            "success": True,
+            "text": transcript.text,
+            "language": getattr(transcript, "language", None),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Transcription failed: {str(e)}"
+        )
+

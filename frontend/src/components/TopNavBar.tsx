@@ -1,6 +1,6 @@
 "use client";
 
-import { Wand2, History, Settings, ShieldCheck, LogOut, GitBranch, FolderOpen, Clock, ArrowLeft, Zap } from "lucide-react";
+import { Wand2, History, Settings, ShieldCheck, LogOut, GitBranch, FolderOpen, Clock, ArrowLeft, Zap, LayoutDashboard } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuthStore } from "@/stores/authStore";
 import { useRouter, usePathname } from "next/navigation";
@@ -10,6 +10,7 @@ import { useUIStore } from "@/stores/uiStore";
 import Link from "next/link";
 
 const navItems = [
+  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Studio", url: "/studio", icon: Wand2 },
   { title: "History", url: "/history", icon: History },
   { title: "Settings", url: "/settings", icon: Settings },
@@ -24,6 +25,7 @@ export function TopNavBar() {
 
   const isStudio = pathname === "/studio";
   const isAdmin = pathname === "/admin";
+  const isDashboard = pathname === "/dashboard";
 
   const handleLogout = () => {
     logout();
@@ -39,7 +41,7 @@ export function TopNavBar() {
   };
 
   return (
-    <header className="h-16 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className={`h-16 border-b ${isDashboard ? "border-transparent bg-transparent absolute top-0 left-0 right-0 z-20" : "border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60"}`}>
       <div className="h-full flex items-center justify-between px-4 gap-4">
         {/* Logo Section */}
         <div className="flex items-center gap-3 shrink-0">
@@ -57,8 +59,8 @@ export function TopNavBar() {
           )}
         </div>
 
-        {/* Navigation Items (Hidden on Studio & Admin) */}
-        {!isStudio && !isAdmin && (
+        {/* Navigation Items (Hidden on Studio, Admin & Dashboard) */}
+        {!isStudio && !isAdmin && !isDashboard && (
           <nav className="flex items-center gap-1">
             {navItems.map((item) => (
               <NavLink
@@ -114,9 +116,8 @@ export function TopNavBar() {
                 {githubConnected ? "Connected" : "Connect GitHub"}
               </span>
               <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  githubConnected ? "bg-success shadow-[0_0_8px_rgba(34,197,94,0.6)]" : "bg-muted-foreground/40"
-                }`}
+                className={`h-1.5 w-1.5 rounded-full ${githubConnected ? "bg-success shadow-[0_0_8px_rgba(34,197,94,0.6)]" : "bg-muted-foreground/40"
+                  }`}
               />
             </button>
           </div>
@@ -133,8 +134,9 @@ export function TopNavBar() {
           </div>
         )}
 
-        {/* Spacer for non-studio/admin pages */}
-        {!isStudio && !isAdmin && <div className="flex-1" />}
+        {/* Spacer for non-studio/admin/dashboard pages */}
+        {!isStudio && !isAdmin && !isDashboard && <div className="flex-1" />}
+        {isDashboard && <div className="flex-1" />}
 
         {/* User Profile & Logout */}
         <div className="flex items-center gap-3 shrink-0">

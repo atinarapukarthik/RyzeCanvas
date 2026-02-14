@@ -1,6 +1,6 @@
 "use client";
 
-import { Wand2, History, Settings, ShieldCheck, LogOut } from "lucide-react";
+import { Wand2, History, Settings, ShieldCheck, LogOut, LayoutDashboard } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuthStore } from "@/stores/authStore";
 import { useRouter } from "next/navigation";
@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/sidebar";
 
 const navItems = [
+  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Studio", url: "/studio", icon: Wand2 },
   { title: "History", url: "/history", icon: History },
   { title: "Settings", url: "/settings", icon: Settings },

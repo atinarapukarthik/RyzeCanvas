@@ -27,7 +27,7 @@ class ChatRequestBody(BaseModel):
     prompt: str = Field(..., min_length=1, description="User's message")
     mode: str = Field(default="chat", description="Mode: 'chat', 'plan', or 'generate'")
     provider: str = Field(default="gemini", description="AI provider")
-    model: str = Field(default="gemini-1.5-pro", description="Model identifier")
+    model: str = Field(default="gemini-2.5-flash", description="Model identifier")
     conversation_history: List[ChatMessageInput] = Field(
         default_factory=list,
         description="Previous messages for context"
@@ -43,7 +43,7 @@ class ChatRequestBody(BaseModel):
                 "prompt": "Create a login form with email and password",
                 "mode": "generate",
                 "provider": "gemini",
-                "model": "gemini-1.5-pro",
+                "model": "gemini-2.5-flash",
                 "conversation_history": [
                     {"role": "user", "content": "I need a login page"},
                     {"role": "ai", "content": "I can help with that. What fields do you need?"},
@@ -55,7 +55,6 @@ class ChatRequestBody(BaseModel):
 @router.post("/stream")
 async def chat_stream(
     body: ChatRequestBody,
-    current_user: User = Depends(get_current_user),
 ):
     """
     Stream a chat response via Server-Sent Events (SSE).
@@ -73,7 +72,7 @@ async def chat_stream(
     - `error`: Error message
     - `done`: Stream complete with metadata
 
-    **Requires:** Authentication
+    **Authentication:** Not required (public access)
     """
     if body.mode not in ("chat", "plan", "generate"):
         raise HTTPException(

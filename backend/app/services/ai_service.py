@@ -9,7 +9,7 @@ class AIService:
         Generate React/Next.js code using the specified AI provider.
         """
         if provider == "gemini":
-            return await AIService._generate_gemini(prompt, model or "gemini-1.5-pro")
+            return await AIService._generate_gemini(prompt, model or "gemini-2.5-flash")
         elif provider == "claude":
             return await AIService._generate_claude(prompt, model or "claude-3-5-sonnet-20240620")
         elif provider == "openrouter":

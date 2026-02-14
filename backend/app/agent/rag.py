@@ -2,12 +2,12 @@
 RAG (Retrieval-Augmented Generation) Module for RyzeCanvas.
 Implements a FAISS vector store to retrieve relevant component documentation.
 """
-import os
 from typing import List, Dict, Any
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 
+from app.core.config import settings
 from app.core.component_docs import get_docs_for_embedding, COMPONENT_DOCS
 
 
@@ -31,10 +31,10 @@ class ComponentRAG:
     def _initialize_vectorstore(self):
         """Initialize FAISS vector store with component documentation."""
         try:
-            # Get OpenAI API key
-            api_key = os.getenv("OPENAI_API_KEY")
+            # Get OpenAI API key from settings
+            api_key = settings.OPENAI_API_KEY
             if not api_key:
-                raise ValueError("OPENAI_API_KEY not found in environment variables")
+                raise ValueError("OPENAI_API_KEY not found in settings — required for RAG embeddings")
             
             # Initialize embeddings
             embeddings = OpenAIEmbeddings(

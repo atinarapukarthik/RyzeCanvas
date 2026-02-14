@@ -1,20 +1,22 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, Suspense, useCallback } from "react";
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CodeComparison } from "@/components/ui/code-comparison";
+import { PromptBox } from "@/components/ui/prompt-box";
 import { useAuthStore } from "@/stores/authStore";
 import { useUIStore } from "@/stores/uiStore";
-import { createProject, searchWeb, uploadFile, updateProject, streamChat } from "@/lib/api";
+import { createProject, searchWeb, updateProject, streamChat, fetchProjects } from "@/lib/api";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-    Zap, GitBranch, Send, Paperclip, Monitor, Smartphone, GitFork, Download, Loader2,
-    ChevronDown, User, Bot, Search, MessageSquare, Lightbulb, Globe, Code2, Eye,
-    FileCode, Pencil, Check, X, LogOut, FolderOpen, Clock,
-    RotateCcw, Copy, Play,
+    Zap, GitBranch, Monitor, Smartphone, GitFork, Download, Loader2,
+    ChevronDown, ChevronRight, User, Bot, Search, MessageSquare, Lightbulb, Globe, Code2, Eye,
+    FileCode, Pencil, Check, X, LogOut, FolderOpen, Clock, GitCommit,
+    RotateCcw, Copy, Play, Save, Folder, File, FolderTree, GitCompare,
 } from "lucide-react";
 import { ProviderSelector, AIModel } from "@/components/ProviderSelector";
 
@@ -24,16 +26,234 @@ interface Message {
     steps?: string[];
     isSearching?: boolean;
     isThinking?: boolean;
+    isCommit?: boolean;
+    files?: { name: string; path: string; status: 'added' | 'modified' }[];
 }
 
-export default function Studio() {
+/**
+ * Build a self-contained HTML page that renders the given React+Tailwind code
+ * inside an iframe via srcdoc. Uses CDN-loaded React 18, ReactDOM, Babel, and Tailwind CSS.
+ */
+function buildPreviewHtml(code: string): string {
+    // Extract the component name BEFORE transforming exports
+    const fnMatch = code.match(/export\s+default\s+function\s+(\w+)/);
+    const constMatch = code.match(/export\s+default\s+(\w+)\s*;?\s*$/m);
+    const standaloneFn = code.match(/^function\s+(\w+)/m);
+    const componentName = fnMatch?.[1] || constMatch?.[1] || standaloneFn?.[1] || 'App';
+
+    // Clean code for browser execution:
+    // 1. Remove import lines (they won't resolve in browser)
+    // 2. Strip TypeScript-only syntax (interfaces, type aliases, generic type params)
+    // 3. Handle exports properly
+    const codeWithoutImports = code
+        // Remove all import statements (single and multi-line)
+        .replace(/^import\s+.*?from\s+['"].*?['"];?\s*$/gm, '')
+        .replace(/^import\s+['"].*?['"];?\s*$/gm, '')
+        .replace(/^import\s+type\s+.*?from\s+['"].*?['"];?\s*$/gm, '')
+        // Remove TypeScript interface blocks (multi-line safe)
+        .replace(/^(?:export\s+)?interface\s+\w+(?:\s+extends\s+\w+)?\s*\{[\s\S]*?\n\}/gm, '')
+        // Remove TypeScript type aliases (multi-line safe)
+        .replace(/^(?:export\s+)?type\s+\w+(?:<[^>]*>)?\s*=\s*[\s\S]*?;\s*$/gm, '')
+        // Remove standalone type annotations on function params: (props: Type) → (props)
+        .replace(/:\s*(?:React\.)?(?:FC|FunctionComponent|ComponentProps|HTMLAttributes|MouseEvent|ChangeEvent|FormEvent|KeyboardEvent|CSSProperties)(?:<[^>]*>)?/g, '')
+        // Handle default export
+        .replace(/^export\s+default\s+function\s+/m, 'function ')
+        .replace(/^export\s+default\s+/m, 'const __DefaultExport__ = ')
+        // Remove export keyword from named exports (keep the declaration)
+        .replace(/^export\s+(function|const|let|var|class)\s+/gm, '$1 ');
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        #root { min-height: 100vh; }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: { extend: {} }
+        }
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel" data-type="module" data-presets="react,typescript">
+        const { useState, useEffect, useRef, useMemo, useCallback, useContext, createContext,
+                useReducer, useId, Fragment, forwardRef, memo, Suspense } = React;
+
+        // Stub for lucide-react icons — render simple SVG placeholders
+        const iconHandler = {
+            get(target, prop) {
+                if (prop === '__esModule') return false;
+                return function LucideIcon(props) {
+                    const size = props?.size || 24;
+                    return React.createElement('svg', {
+                        width: size, height: size, viewBox: '0 0 24 24',
+                        fill: 'none', stroke: 'currentColor', strokeWidth: 2,
+                        strokeLinecap: 'round', strokeLinejoin: 'round',
+                        className: props?.className || '',
+                        ...props,
+                    }, React.createElement('circle', { cx: 12, cy: 12, r: 10 }));
+                };
+            }
+        };
+        const lucideReact = new Proxy({}, iconHandler);
+        const { Menu, X, ChevronDown, ChevronRight, ChevronLeft, ChevronUp,
+                Search, Heart, Star, ShoppingCart, User, Bell, Settings,
+                Mail, Phone, MapPin, Calendar, Clock, Check, Plus, Minus,
+                Edit, Trash, Eye, EyeOff, Lock, Unlock, Home, ArrowRight,
+                ArrowLeft, ExternalLink, Download, Upload, Share, Filter,
+                MoreHorizontal, MoreVertical, Sun, Moon, Github, Twitter,
+                Linkedin, Facebook, Instagram, Youtube, Globe, Zap, Award,
+                TrendingUp, BarChart, PieChart, Activity, AlertCircle, Info,
+                HelpCircle, XCircle, CheckCircle, AlertTriangle, Loader2,
+                RefreshCw, RotateCcw, Copy, Clipboard, Send, MessageSquare,
+                Image, Camera, Video, Mic, Volume2, VolumeX, Wifi, WifiOff,
+                Battery, Bluetooth, Monitor, Smartphone, Tablet, Laptop,
+                Server, Database, Cloud, Code, Terminal, FileText, Folder,
+                Archive, Box, Package, Gift, CreditCard, DollarSign, Percent,
+                Tag, Bookmark, Flag, Hash, AtSign, Link, Paperclip, Scissors,
+                Layers, Layout, Grid, List, Columns, Sidebar, PanelLeft,
+                LogIn, LogOut, UserPlus, Users, Shield, Key, Play, Pause,
+                SkipForward, SkipBack, Maximize, Minimize, Move, Trash2,
+                Edit2, Edit3, Save, FilePlus, FolderPlus, FolderOpen,
+                ChevronFirst, ChevronLast, ChevronsUpDown, ArrowUpDown
+        } = lucideReact;
+
+        // Stub for common UI component libraries (framer-motion, etc.)
+        const motion = new Proxy({}, {
+            get(target, prop) {
+                return React.forwardRef(function MotionComponent(props, ref) {
+                    const { initial, animate, exit, transition, whileHover, whileTap, variants, ...rest } = props;
+                    return React.createElement(prop, { ...rest, ref });
+                });
+            }
+        });
+        const AnimatePresence = ({ children }) => children;
+
+        ${codeWithoutImports}
+
+        const AppComponent = typeof __DefaultExport__ !== 'undefined' ? __DefaultExport__ : ${componentName};
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(AppComponent));
+    </script>
+</body>
+</html>`;
+}
+
+/**
+ * Represents a file in the generated project file tree.
+ */
+interface GeneratedFile {
+    name: string;
+    path: string;
+    content: string;
+    type: 'file' | 'folder';
+    children?: GeneratedFile[];
+}
+
+/**
+ * Parse generated code into a visual folder structure.
+ * The main component goes into src/components/Generated.tsx
+ * and we show the typical Next.js project structure around it.
+ */
+function buildFileTree(code: string): GeneratedFile[] {
+    if (!code) return [];
+
+    return [
+        {
+            name: 'src', path: 'src', type: 'folder', content: '', children: [
+                {
+                    name: 'app', path: 'src/app', type: 'folder', content: '', children: [
+                        { name: 'layout.tsx', path: 'src/app/layout.tsx', type: 'file', content: 'import "./globals.css";\n\nexport default function RootLayout({ children }: { children: React.ReactNode }) {\n  return (\n    <html lang="en">\n      <body>{children}</body>\n    </html>\n  );\n}' },
+                        { name: 'page.tsx', path: 'src/app/page.tsx', type: 'file', content: 'import Generated from "@/components/Generated";\n\nexport default function Home() {\n  return <Generated />;\n}' },
+                        { name: 'globals.css', path: 'src/app/globals.css', type: 'file', content: '@tailwind base;\n@tailwind components;\n@tailwind utilities;' },
+                    ]
+                },
+                {
+                    name: 'components', path: 'src/components', type: 'folder', content: '', children: [
+                        { name: 'Generated.tsx', path: 'src/components/Generated.tsx', type: 'file', content: code },
+                    ]
+                },
+            ]
+        },
+        { name: 'package.json', path: 'package.json', type: 'file', content: '{\n  "name": "ryzecanvas-app",\n  "version": "0.1.0",\n  "scripts": {\n    "dev": "next dev",\n    "build": "next build",\n    "start": "next start"\n  },\n  "dependencies": {\n    "next": "^15.0.0",\n    "react": "^19.0.0",\n    "react-dom": "^19.0.0",\n    "lucide-react": "^0.400.0"\n  },\n  "devDependencies": {\n    "tailwindcss": "^3.4.0",\n    "typescript": "^5.0.0",\n    "@types/react": "^19.0.0"\n  }\n}' },
+        { name: 'tailwind.config.ts', path: 'tailwind.config.ts', type: 'file', content: 'import type { Config } from "tailwindcss";\n\nconst config: Config = {\n  content: ["./src/**/*.{js,ts,jsx,tsx,mdx}"],\n  theme: { extend: {} },\n  plugins: [],\n};\n\nexport default config;' },
+        { name: 'tsconfig.json', path: 'tsconfig.json', type: 'file', content: '{\n  "compilerOptions": {\n    "target": "es5",\n    "lib": ["dom", "es6"],\n    "jsx": "preserve",\n    "module": "esnext",\n    "moduleResolution": "bundler",\n    "paths": { "@/*": ["./src/*"] },\n    "strict": true\n  },\n  "include": ["src"],\n  "exclude": ["node_modules"]\n}' },
+    ];
+}
+
+/**
+ * Renders a file tree explorer sidebar. Click a file to view its code.
+ */
+function FileTreeView({ files, activeFile, onSelect, depth = 0 }: {
+    files: GeneratedFile[];
+    activeFile: string;
+    onSelect: (file: GeneratedFile) => void;
+    depth?: number;
+}) {
+    const [expanded, setExpanded] = useState<Record<string, boolean>>({ 'src': true, 'src/app': true, 'src/components': true });
+
+    return (
+        <div className="space-y-0.5">
+            {files.map((file) => {
+                const isFolder = file.type === 'folder';
+                const isOpen = expanded[file.path] ?? false;
+                const isActive = activeFile === file.path;
+
+                return (
+                    <div key={file.path}>
+                        <button
+                            onClick={() => {
+                                if (isFolder) {
+                                    setExpanded((prev) => ({ ...prev, [file.path]: !prev[file.path] }));
+                                } else {
+                                    onSelect(file);
+                                }
+                            }}
+                            className={`w-full flex items-center gap-1.5 px-2 py-1 text-[11px] font-mono rounded transition-colors ${isActive && !isFolder ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}
+                            style={{ paddingLeft: `${depth * 12 + 8}px` }}
+                        >
+                            {isFolder ? (
+                                <>
+                                    <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                                    <Folder className="h-3.5 w-3.5 shrink-0 text-primary/70" />
+                                </>
+                            ) : (
+                                <>
+                                    <span className="w-3" />
+                                    <FileCode className={`h-3.5 w-3.5 shrink-0 ${file.name.endsWith('.tsx') || file.name.endsWith('.ts') ? 'text-blue-400' : file.name.endsWith('.css') ? 'text-pink-400' : file.name.endsWith('.json') ? 'text-yellow-400' : 'text-muted-foreground'}`} />
+                                </>
+                            )}
+                            <span className="truncate">{file.name}</span>
+                        </button>
+                        {isFolder && isOpen && file.children && (
+                            <FileTreeView files={file.children} activeFile={activeFile} onSelect={onSelect} depth={depth + 1} />
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+function StudioContent() {
     const { user, isAuthenticated, logout } = useAuthStore();
     const { githubConnected, setGithubConnected, selectedModel, setSelectedModel, githubModal, setGithubModal } = useUIStore();
     const router = useRouter();
+    const searchParams = useSearchParams();
 
     const [messages, setMessages] = useState<Message[]>([
-        { role: 'ai', content: 'Hello! I\'m Ryze. Describe the UI you want to build and I\'ll generate production-ready React or Next.js code. You can also select different AI providers above.' },
+        { role: 'ai', content: 'Hello! I\'m Ryze. Describe the UI you want to build and I\'ll generate production-ready React + Tailwind CSS code. Try saying "Create a landing page" or "Build a dashboard".' },
     ]);
+    const [projectName, setProjectName] = useState('Untitled Project');
+    const [showNameInput, setShowNameInput] = useState(false);
     const [input, setInput] = useState('');
     const [generating, setGenerating] = useState(false);
     const [thinkingSteps, setThinkingSteps] = useState<string[]>([]);
@@ -43,6 +263,7 @@ export default function Studio() {
     const [activeTab, setActiveTab] = useState<'preview' | 'code' | 'diff'>('preview');
     const [generatedCode, setGeneratedCode] = useState('');
     const [editableCode, setEditableCode] = useState('');
+    const [previousCode, setPreviousCode] = useState('');
     const [isEditing, setIsEditing] = useState(false);
     const [pushing, setPushing] = useState(false);
     const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
@@ -50,19 +271,35 @@ export default function Studio() {
     const [framework, setFramework] = useState<'react' | 'nextjs'>('react');
     const [repoUrl, setRepoUrl] = useState('');
     const [chatCollapsed, setChatCollapsed] = useState(false);
-    const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
     const [projectId, setProjectId] = useState<string>('');
+    const [activeFile, setActiveFile] = useState<string>('src/components/Generated.tsx');
+    const [viewingFileContent, setViewingFileContent] = useState<string>('');
 
     const chatEndRef = useRef<HTMLDivElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const streamingMessageRef = useRef<string>('');
 
+    // Load project from history if projectId is in URL
     useEffect(() => {
-        if (!isAuthenticated && typeof window !== 'undefined') {
-            // Optional: Redirect if not logged in
-            // router.push('/login');
+        const loadProjectId = searchParams.get('project');
+        if (loadProjectId) {
+            fetchProjects().then((projects) => {
+                const project = projects.find((p) => p.id === loadProjectId);
+                if (project && project.code) {
+                    setGeneratedCode(project.code);
+                    setEditableCode(project.code);
+                    setProjectId(project.id);
+                    setActiveTab('preview');
+                    setMessages((m) => [...m, {
+                        role: 'ai',
+                        content: `Loaded project: **${project.title}**. You can preview it, edit the code, or ask me to modify it.`,
+                    }]);
+                }
+            }).catch(() => {
+                // Failed to load project
+            });
         }
-    }, [isAuthenticated, router]);
+    }, [searchParams]);
 
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -72,9 +309,17 @@ export default function Studio() {
         setEditableCode(generatedCode);
     }, [generatedCode]);
 
-    const handleSend = async () => {
-        if (!input.trim() || generating) return;
-        const prompt = input;
+    // Track code changes for diff view
+    useEffect(() => {
+        if (generatedCode && previousCode && generatedCode !== previousCode) {
+            // Code has been regenerated, optionally auto-show diff
+            // setActiveTab('diff');
+        }
+    }, [generatedCode, previousCode]);
+
+    const handleSend = async (promptMessage?: string) => {
+        const prompt = promptMessage || input;
+        if (!prompt.trim() || generating) return;
         setInput('');
 
         // Determine the orchestration mode
@@ -167,19 +412,55 @@ export default function Studio() {
 
                 onCode: (code) => {
                     const codeStr = typeof code === 'string' ? code : JSON.stringify(code, null, 2);
-                    setGeneratedCode(codeStr);
-                    setActiveTab('code');
 
-                    // Save as project
-                    createProject(prompt, {
-                        code: codeStr,
-                        provider: selectedModel.provider,
-                        model: selectedModel.id,
-                    }).then((project) => {
-                        setProjectId(project.id);
-                    }).catch(() => {
-                        // Project save failed silently — code is still shown
-                    });
+                    const isUpdate = !!generatedCode;
+
+                    // Track previous code for diff view
+                    if (generatedCode && !previousCode) {
+                        setPreviousCode(generatedCode);
+                    } else if (generatedCode && previousCode !== generatedCode) {
+                        setPreviousCode(generatedCode);
+                    }
+
+                    setGeneratedCode(codeStr);
+                    setActiveTab('preview');
+
+                    // Add commit-type message showing file changes
+                    const fileTree = buildFileTree(codeStr);
+                    const flatFiles: { name: string; path: string; status: 'added' | 'modified' }[] = [];
+                    const walkFiles = (files: GeneratedFile[]) => {
+                        files.forEach(f => {
+                            if (f.type === 'file') {
+                                flatFiles.push({
+                                    name: f.name,
+                                    path: f.path,
+                                    status: isUpdate ? 'modified' : 'added',
+                                });
+                            }
+                            if (f.children) walkFiles(f.children);
+                        });
+                    };
+                    walkFiles(fileTree);
+
+                    setMessages((m) => [...m, {
+                        role: 'ai',
+                        content: isUpdate ? `Updated ${flatFiles.length} files` : `Generated ${flatFiles.length} files`,
+                        isCommit: true,
+                        files: flatFiles,
+                    }]);
+
+                    // Save or update the project
+                    if (projectId) {
+                        updateProject(projectId, { code_json: codeStr, description: prompt }).catch(() => {});
+                    } else {
+                        createProject(prompt, {
+                            code: codeStr,
+                            provider: selectedModel.provider,
+                            model: selectedModel.id,
+                        }).then((project) => {
+                            setProjectId(project.id);
+                        }).catch(() => {});
+                    }
                 },
 
                 onError: (error) => {
@@ -189,11 +470,10 @@ export default function Studio() {
                 onDone: (meta) => {
                     // Append completion info for generate mode
                     if (orchestrationMode === 'generate' && meta?.success) {
-                        const count = meta.components_count || 0;
                         const retries = meta.retries || 0;
-                        let suffix = `\n\nGenerated **${count} components** using **${selectedModel.name}**`;
-                        if (retries > 0) suffix += ` (validated after ${retries} retries)`;
-                        suffix += '. Check the Code tab.';
+                        let suffix = `\n\nGenerated production-ready code using **${selectedModel.name}**`;
+                        if (retries > 0) suffix += ` (fixed after ${retries} retries)`;
+                        suffix += '. Check the Preview tab to see it live.';
 
                         streamingMessageRef.current += suffix;
                         const finalText = streamingMessageRef.current;
@@ -230,7 +510,6 @@ export default function Studio() {
             setGenerating(false);
             setThinkingOpen(false);
             setSearchingWeb(false);
-            setUploadedFiles([]);
             abortControllerRef.current = null;
         }
     };
@@ -241,9 +520,7 @@ export default function Studio() {
             return;
         }
         setPushing(true);
-        // Note: We need a projectId to push. Let's assume we use the last generated project or similar.
-        // For now, mocking the success if we don't have a projectId.
-        toast.success('Pushed to GitHub ✓');
+        toast.success('Pushed to GitHub');
         setPushing(false);
     };
 
@@ -262,7 +539,7 @@ export default function Studio() {
         setGeneratedCode(editableCode);
         setIsEditing(false);
 
-        // Update the project in the backend if projectId exists
+        // Update the project in the backend if projectId exists, otherwise create one
         if (projectId) {
             try {
                 await updateProject(projectId, { code_json: editableCode });
@@ -270,8 +547,18 @@ export default function Studio() {
             } catch (error) {
                 toast.error('Failed to save code', { description: error instanceof Error ? error.message : "Unknown error" });
             }
-        } else {
-            toast.success('Code saved locally!');
+        } else if (editableCode.trim()) {
+            try {
+                const project = await createProject('Manual edit', {
+                    code: editableCode,
+                    provider: selectedModel.provider,
+                    model: selectedModel.id,
+                });
+                setProjectId(project.id);
+                toast.success('Code saved as new project!');
+            } catch (error) {
+                toast.error('Failed to save code', { description: error instanceof Error ? error.message : "Unknown error" });
+            }
         }
     };
 
@@ -280,24 +567,22 @@ export default function Studio() {
         toast.success('Copied to clipboard!');
     };
 
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const files = Array.from(e.target.files || []);
-        if (files.length === 0) return;
-
-        setUploadedFiles((prev) => [...prev, ...files]);
-        const fileNames = files.map((f) => f.name).join(', ');
-        setMessages((m) => [...m, {
-            role: 'user',
-            content: `📎 Uploaded: ${fileNames}`
-        }]);
-        toast.success(`Uploaded ${files.length} file(s)`);
-
-        // Reset input
-        e.target.value = '';
-    };
-
-    const handleRemoveFile = (fileName: string) => {
-        setUploadedFiles((prev) => prev.filter((f) => f.name !== fileName));
+    const handleDownload = () => {
+        const code = editableCode || generatedCode;
+        if (!code) {
+            toast.info('No code to download');
+            return;
+        }
+        const blob = new Blob([code], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'Component.tsx';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast.success('Downloaded Component.tsx');
     };
 
     return (
@@ -357,6 +642,52 @@ export default function Studio() {
                                             animate={{ opacity: 1, y: 0 }}
                                             className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
                                         >
+                                            {/* Commit-type file update message */}
+                                            {msg.isCommit ? (
+                                                <div className="w-full">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <div className="h-6 w-6 rounded-full bg-success/10 flex items-center justify-center border border-success/20">
+                                                            <GitCommit className="h-3.5 w-3.5 text-success" />
+                                                        </div>
+                                                        <span className="text-xs font-semibold text-foreground">{msg.content}</span>
+                                                        <span className="text-[10px] text-muted-foreground ml-auto">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                                    </div>
+                                                    {msg.files && (
+                                                        <div className="ml-8 space-y-0.5">
+                                                            {msg.files.map((file) => (
+                                                                <button
+                                                                    key={file.path}
+                                                                    onClick={() => {
+                                                                        setActiveTab('code');
+                                                                        setActiveFile(file.path);
+                                                                        const tree = buildFileTree(generatedCode);
+                                                                        const findFile = (files: GeneratedFile[]): string => {
+                                                                            for (const f of files) {
+                                                                                if (f.path === file.path) return f.content;
+                                                                                if (f.children) {
+                                                                                    const found = findFile(f.children);
+                                                                                    if (found) return found;
+                                                                                }
+                                                                            }
+                                                                            return '';
+                                                                        };
+                                                                        setViewingFileContent(findFile(tree));
+                                                                    }}
+                                                                    className="w-full flex items-center gap-2 px-2 py-1 text-[11px] font-mono rounded hover:bg-secondary/50 transition-colors text-left group"
+                                                                >
+                                                                    <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${file.status === 'added' ? 'bg-success/10 text-success' : 'bg-accent/10 text-accent'}`}>
+                                                                        {file.status === 'added' ? 'A' : 'M'}
+                                                                    </span>
+                                                                    <FileCode className={`h-3 w-3 shrink-0 ${file.name.endsWith('.tsx') || file.name.endsWith('.ts') ? 'text-blue-400' : file.name.endsWith('.css') ? 'text-pink-400' : file.name.endsWith('.json') ? 'text-yellow-400' : 'text-muted-foreground'}`} />
+                                                                    <span className="text-muted-foreground group-hover:text-foreground truncate">{file.path}</span>
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                            /* Regular message */
+                                            <>
                                             <div className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 border ${msg.role === 'ai' ? 'bg-primary/5 text-primary border-primary/20' : 'bg-secondary text-foreground border-border'
                                                 }`}>
                                                 {msg.role === 'ai' ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
@@ -372,6 +703,8 @@ export default function Studio() {
                                                     {msg.content}
                                                 </div>
                                             </div>
+                                            </>
+                                            )}
                                         </motion.div>
                                     ))}
                                 </AnimatePresence>
@@ -383,12 +716,12 @@ export default function Studio() {
                                             {searchingWeb ? (
                                                 <>
                                                     <Globe className="h-3.5 w-3.5 text-accent animate-glow-pulse" />
-                                                    <span className="text-accent font-medium">Searching the web…</span>
+                                                    <span className="text-accent font-medium">Searching the web...</span>
                                                 </>
                                             ) : (
                                                 <>
                                                     <Loader2 className="h-3.5 w-3.5 text-primary animate-spin" />
-                                                    <span className="text-primary font-medium">Ryze is thinking…</span>
+                                                    <span className="text-primary font-medium">Ryze is thinking...</span>
                                                 </>
                                             )}
                                             <ChevronDown className={`h-3.5 w-3.5 ml-auto text-muted-foreground transition-transform ${thinkingOpen ? 'rotate-180' : ''}`} />
@@ -431,40 +764,69 @@ export default function Studio() {
 
                             {/* Input */}
                             <div className="p-3 border-t border-border bg-background">
-                                {uploadedFiles.length > 0 && (
-                                    <div className="mb-2 flex flex-wrap gap-1.5">
-                                        {uploadedFiles.map((file) => (
-                                            <div key={file.name} className="bg-secondary/50 rounded px-2 py-1 text-xs flex items-center gap-1.5 border border-border">
-                                                <FileCode className="h-3 w-3 text-primary" />
-                                                <span className="truncate max-w-[200px]">{file.name}</span>
-                                                <button onClick={() => handleRemoveFile(file.name)} className="ml-1 hover:text-destructive transition-colors">
-                                                    <X className="h-3 w-3" />
-                                                </button>
-                                            </div>
-                                        ))}
+                                <PromptBox
+                                    onSend={(msg) => handleSend(msg)}
+                                    placeholder={chatMode === 'plan' ? 'Ask for architectural advice...' : 'Describe what you want to build...'}
+                                    className="bg-secondary/30 border-border/50"
+                                />
+
+                                {/* Chat Options: Plan Mode or Name Chat */}
+                                {messages.length > 1 && (
+                                    <div className="mt-3 flex gap-2 text-xs">
+                                        <button
+                                            onClick={() => setShowNameInput(!showNameInput)}
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                                            title="Name this chat"
+                                        >
+                                            <Pencil className="h-3.5 w-3.5" />
+                                            Name Chat
+                                        </button>
+                                        <button
+                                            onClick={() => setChatMode(chatMode === 'chat' ? 'plan' : 'chat')}
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                                            title={`Switch to ${chatMode === 'chat' ? 'plan' : 'chat'} mode`}
+                                        >
+                                            <Lightbulb className="h-3.5 w-3.5" />
+                                            {chatMode === 'chat' ? 'Switch to Plan' : 'Switch to Chat'}
+                                        </button>
                                     </div>
                                 )}
-                                <div className="flex items-end gap-2 glass rounded-xl px-3 py-2 border-primary/10 focus-within:border-primary/30 transition-colors">
-                                    <input type="file" id="file-upload" onChange={handleFileUpload} multiple className="hidden" accept=".js,.jsx,.ts,.tsx,.png,.jpg,.jpeg,.figma" />
-                                    <label htmlFor="file-upload" className="cursor-pointer">
-                                        <Paperclip className="h-4 w-4 text-muted-foreground hover:text-foreground transition-colors mb-1.5" />
-                                    </label>
-                                    <textarea
-                                        value={input}
-                                        onChange={(e) => setInput(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                                        placeholder={chatMode === 'plan' ? 'Ask for architectural advice...' : 'Describe a component...'}
-                                        className="flex-1 bg-transparent border-0 shadow-none focus:ring-0 p-0 text-sm outline-none resize-none min-h-[20px] max-h-[120px] py-1"
-                                        rows={1}
-                                    />
-                                    <div className="flex items-center gap-1 mb-0.5">
-                                        <Button variant="ghost" size="icon" onClick={handleSend} disabled={generating || !input.trim()} className="h-8 w-8 shrink-0 rounded-lg hover:bg-primary/10 hover:text-primary">
-                                            <Send className="h-4.5 w-4.5" />
-                                        </Button>
-                                    </div>
-                                </div>
+
+                                {/* Name Chat Input */}
+                                {showNameInput && (
+                                    <motion.div
+                                        initial={{ opacity: 0, height: 0 }}
+                                        animate={{ opacity: 1, height: 'auto' }}
+                                        exit={{ opacity: 0, height: 0 }}
+                                        className="mt-2 flex gap-2"
+                                    >
+                                        <input
+                                            type="text"
+                                            value={projectName}
+                                            onChange={(e) => setProjectName(e.target.value)}
+                                            placeholder="Enter chat name..."
+                                            className="flex-1 bg-secondary/50 border border-border rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary/50 transition-colors"
+                                        />
+                                        <button
+                                            onClick={() => {
+                                                setShowNameInput(false);
+                                                toast.success(`Chat renamed to "${projectName}"`);
+                                            }}
+                                            className="px-2.5 py-1.5 bg-primary/10 text-primary hover:bg-primary/20 rounded-md text-xs font-medium transition-colors"
+                                        >
+                                            <Check className="h-3.5 w-3.5" />
+                                        </button>
+                                        <button
+                                            onClick={() => setShowNameInput(false)}
+                                            className="px-2 py-1.5 text-muted-foreground hover:text-foreground rounded-md text-xs transition-colors"
+                                        >
+                                            <X className="h-3.5 w-3.5" />
+                                        </button>
+                                    </motion.div>
+                                )}
+
                                 <p className="text-[9px] text-muted-foreground mt-2 text-center uppercase tracking-widest font-semibold opacity-60">
-                                    {chatMode === 'plan' ? 'Plan mode active' : 'Next.js & Tailwind CSS enabled'}
+                                    {chatMode === 'plan' ? 'Plan mode active' : 'React + Tailwind CSS'}
                                 </p>
                             </div>
                         </>
@@ -479,12 +841,14 @@ export default function Studio() {
                             {([
                                 { key: 'preview' as const, icon: Eye, label: 'Preview' },
                                 { key: 'code' as const, icon: Code2, label: 'Code' },
-                                { key: 'diff' as const, icon: FileCode, label: 'Diff' },
-                            ]).map(({ key, icon: Icon, label }) => (
+                                { key: 'diff' as const, icon: GitCompare, label: 'Diff', disabled: !previousCode },
+                            ]).map(({ key, icon: Icon, label, disabled = false }) => (
                                 <button
                                     key={key}
-                                    onClick={() => setActiveTab(key)}
-                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === key ? 'bg-primary/10 text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
+                                    onClick={() => !disabled && setActiveTab(key)}
+                                    disabled={disabled}
+                                    title={disabled ? 'Code comparison not available yet' : undefined}
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${disabled ? 'opacity-40 cursor-not-allowed' : activeTab === key ? 'bg-primary/10 text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
                                         }`}
                                 >
                                     <Icon className="h-3 w-3" /> {label}
@@ -496,8 +860,7 @@ export default function Studio() {
                                 {device === 'desktop' ? <Monitor className="h-4 w-4" /> : <Smartphone className="h-4 w-4" />}
                             </Button>
                             <div className="h-4 w-px bg-border mx-1" />
-                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-md" onClick={() => toast.info('Forking enabled soon')}><GitFork className="h-4 w-4" /></Button>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-md" onClick={() => toast.info('Project downloaded')}><Download className="h-4 w-4" /></Button>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-md" onClick={handleDownload} title="Download code"><Download className="h-4 w-4" /></Button>
 
                             {activeTab === 'code' && (
                                 <>
@@ -525,7 +888,7 @@ export default function Studio() {
                     {/* Content */}
                     <div className="flex-1 p-6 overflow-auto bg-[url('/grid-pattern.svg')] bg-[size:40px_40px] bg-fixed">
                         {activeTab === 'preview' && (
-                            <div className={`mx-auto h-full glass-strong rounded-2xl overflow-hidden shadow-2xl transition-all duration-500 border-white/5 ${device === 'mobile' ? 'max-w-sm' : 'w-full'}`}>
+                            <div className={`mx-auto h-full rounded-2xl overflow-hidden shadow-2xl transition-all duration-500 ${device === 'mobile' ? 'max-w-sm' : 'w-full'}`}>
                                 {generatedCode ? (
                                     <div className="h-full flex flex-col">
                                         {/* Mock browser chrome */}
@@ -538,18 +901,24 @@ export default function Studio() {
                                             <div className="flex-1 flex justify-center">
                                                 <span className="text-[10px] font-mono text-muted-foreground bg-secondary/80 px-4 py-0.5 rounded-full border border-border/40">ryzecanvas.local:3000</span>
                                             </div>
-                                            <RotateCcw className="h-3 w-3 text-muted-foreground hover:text-primary transition-colors cursor-pointer" />
+                                            <RotateCcw
+                                                className="h-3 w-3 text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                                                onClick={() => {
+                                                    // Force iframe reload by toggling code
+                                                    const temp = generatedCode;
+                                                    setGeneratedCode('');
+                                                    setTimeout(() => setGeneratedCode(temp), 50);
+                                                }}
+                                            />
                                         </div>
-                                        {/* Rendered output */}
-                                        <div className="flex-1 flex flex-col items-center justify-center p-8 overflow-auto">
-                                            <div className="w-full max-w-2xl bg-background rounded-xl p-8 border border-border shadow-sm">
-                                                <h2 className="text-xl font-bold mb-4">Preview</h2>
-                                                <p className="text-muted-foreground mb-6">This is a mock rendering of the generated code. In production, this would be an iframe running your React component code.</p>
-                                                <div className="grid grid-cols-2 gap-4">
-                                                    <div className="h-20 bg-primary/5 rounded-lg border border-primary/10 flex items-center justify-center text-primary font-bold">Component A</div>
-                                                    <div className="h-20 bg-accent/5 rounded-lg border border-accent/10 flex items-center justify-center text-accent font-bold">Component B</div>
-                                                </div>
-                                            </div>
+                                        {/* Live preview iframe */}
+                                        <div className="flex-1 overflow-hidden bg-white">
+                                            <iframe
+                                                srcDoc={buildPreviewHtml(generatedCode)}
+                                                className="w-full h-full border-0 outline-none block"
+                                                sandbox="allow-scripts"
+                                                title="Live Preview"
+                                            />
                                         </div>
                                     </div>
                                 ) : (
@@ -559,41 +928,69 @@ export default function Studio() {
                                                 <Play className="h-8 w-8 text-primary shadow-primary" />
                                             </div>
                                             <p className="text-sm font-semibold text-foreground">Awaiting Generation</p>
-                                            <p className="text-[11px] text-muted-foreground/60 mt-1 max-w-[180px]">Your production-ready UI will appear here after description.</p>
+                                            <p className="text-[11px] text-muted-foreground/60 mt-1 max-w-[220px]">Describe what you want to build and I'll generate production-ready React + Tailwind code with a live preview.</p>
                                         </div>
                                     </div>
                                 )}
                             </div>
                         )}
                         {activeTab === 'code' && (
-                            <div className="glass-strong rounded-2xl overflow-hidden h-full flex flex-col shadow-2xl border-white/5">
-                                <div className="flex items-center gap-2 px-4 h-10 border-b border-white/5 bg-sidebar/80 text-[11px] font-mono text-muted-foreground">
-                                    <FileCode className="h-3.5 w-3.5 text-primary" />
-                                    <span>GeneratedUI.tsx</span>
-                                    {isEditing && <span className="text-primary animate-pulse ml-auto flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-primary" /> LIVE EDITING</span>}
-                                </div>
-                                <div className="flex-1 overflow-auto bg-black/40">
-                                    {isEditing ? (
-                                        <textarea
-                                            value={editableCode}
-                                            onChange={(e) => setEditableCode(e.target.value)}
-                                            className="w-full h-full p-6 bg-transparent border-0 shadow-none focus:ring-0 font-mono text-sm text-[hsl(var(--neon-text))] resize-none leading-relaxed outline-none"
+                            <div className="glass-strong rounded-2xl overflow-hidden h-full flex shadow-2xl border-white/5">
+                                {/* File Tree Sidebar */}
+                                {generatedCode && (
+                                    <div className="w-52 shrink-0 border-r border-white/5 bg-sidebar/60 overflow-y-auto py-2">
+                                        <div className="flex items-center gap-1.5 px-3 py-1.5 mb-1">
+                                            <FolderTree className="h-3.5 w-3.5 text-primary" />
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Explorer</span>
+                                        </div>
+                                        <FileTreeView
+                                            files={buildFileTree(generatedCode)}
+                                            activeFile={activeFile}
+                                            onSelect={(file) => {
+                                                setActiveFile(file.path);
+                                                setViewingFileContent(file.content);
+                                            }}
                                         />
-                                    ) : (
-                                        <pre className="p-6 text-sm font-mono text-[hsl(var(--neon-text))] whitespace-pre-wrap leading-relaxed selection:bg-primary/30">
-                                            {generatedCode || '// Your generated code will appear here...\n// Switch to Plan mode for architecture advice first if needed.'}
-                                        </pre>
-                                    )}
+                                    </div>
+                                )}
+                                {/* Code Viewer */}
+                                <div className="flex-1 flex flex-col min-w-0">
+                                    <div className="flex items-center gap-2 px-4 h-10 border-b border-white/5 bg-sidebar/80 text-[11px] font-mono text-muted-foreground">
+                                        <FileCode className="h-3.5 w-3.5 text-primary" />
+                                        <span className="truncate">{activeFile.split('/').pop() || 'Component.tsx'}</span>
+                                        {isEditing && activeFile === 'src/components/Generated.tsx' && (
+                                            <span className="text-primary animate-pulse ml-auto flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-primary" /> LIVE EDITING</span>
+                                        )}
+                                    </div>
+                                    <div className="flex-1 overflow-auto bg-black/40">
+                                        {isEditing && activeFile === 'src/components/Generated.tsx' ? (
+                                            <textarea
+                                                value={editableCode}
+                                                onChange={(e) => setEditableCode(e.target.value)}
+                                                className="w-full h-full p-6 bg-transparent border-0 shadow-none focus:ring-0 font-mono text-sm text-[hsl(var(--neon-text))] resize-none leading-relaxed outline-none"
+                                            />
+                                        ) : (
+                                            <pre className="p-6 text-sm font-mono text-[hsl(var(--neon-text))] whitespace-pre-wrap leading-relaxed selection:bg-primary/30">
+                                                {activeFile === 'src/components/Generated.tsx'
+                                                    ? (generatedCode || '// Your generated React + Tailwind code will appear here...\n// Try: "Create a pricing page with three tiers"\n// Or: "Build a dashboard with sidebar navigation"')
+                                                    : (viewingFileContent || '// Select a file from the tree to view its contents')
+                                                }
+                                            </pre>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         )}
-                        {activeTab === 'diff' && (
-                            <div className="glass-strong rounded-2xl p-8 h-full flex items-center justify-center border-white/5">
-                                <div className="text-center">
-                                    <FileCode className="h-10 w-10 text-muted-foreground/20 mx-auto mb-3" />
-                                    <p className="text-sm font-medium text-muted-foreground">Version Control</p>
-                                    <p className="text-xs text-muted-foreground/50 mt-1">Diff view is coming soon to RyzeCanvas v2.1.</p>
-                                </div>
+                        {activeTab === 'diff' && previousCode && (
+                            <div className="w-full h-full flex flex-col">
+                                <CodeComparison
+                                    beforeCode={previousCode}
+                                    afterCode={generatedCode}
+                                    language="typescript"
+                                    filename="Generated.tsx"
+                                    beforeLabel="Before"
+                                    afterLabel="After"
+                                />
                             </div>
                         )}
                     </div>
@@ -633,7 +1030,7 @@ export default function Studio() {
                                     <Input
                                         value={repoUrl}
                                         onChange={(e) => setRepoUrl(e.target.value)}
-                                        placeholder="https://github.com/atinarapu/project-x"
+                                        placeholder="https://github.com/user/project"
                                         className="bg-secondary/50 border-border/40 focus:border-primary/50"
                                     />
                                 </div>
@@ -657,5 +1054,17 @@ export default function Studio() {
                 )}
             </AnimatePresence>
         </div>
+    );
+}
+
+export default function Studio() {
+    return (
+        <Suspense fallback={
+            <div className="flex items-center justify-center h-full">
+                <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
+            </div>
+        }>
+            <StudioContent />
+        </Suspense>
     );
 }

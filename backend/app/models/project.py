@@ -20,7 +20,7 @@ class Project(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     is_public = Column(Boolean, default=False, nullable=False)
     provider = Column(String, default="gemini", nullable=True)
-    model = Column(String, default="gemini-1.5-pro", nullable=True)
+    model = Column(String, default="gemini-2.5-flash", nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
