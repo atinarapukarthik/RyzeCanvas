@@ -3,7 +3,7 @@ AI Agent API endpoints for RyzeCanvas (Phase 4: LangGraph Orchestration).
 Provides endpoints for UI generation using RAG + State Graph with validation loop.
 """
 from typing import Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, Field
@@ -15,6 +15,7 @@ from app.agent.graph import run_agent  # Phase 4: Use LangGraph orchestration
 from app.core.component_library import ALLOWED_COMPONENTS
 import json
 from datetime import datetime
+import httpx
 
 
 router = APIRouter()
@@ -362,15 +363,142 @@ async def agent_status(current_user: User = Depends(get_current_user)):
 async def list_components(current_user: User = Depends(get_current_user)):
     """
     List all available UI components and their templates.
-    
+
     **Requires:** Authentication
-    
+
     Returns the component library with examples for each component type.
     """
     from app.core.component_library import ALLOWED_COMPONENTS, COMPONENT_TEMPLATES
-    
+
     return {
         "components": ALLOWED_COMPONENTS,
         "count": len(ALLOWED_COMPONENTS),
         "templates": COMPONENT_TEMPLATES
+    }
+
+
+@router.post("/web-search")
+async def search_web(
+    query: str = Query(..., min_length=3, description="Search query"),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Search the web using DuckDuckGo for information relevant to UI generation.
+
+    **Requires:** Authentication
+
+    - **query**: The search query (minimum 3 characters)
+
+    Returns search results that can be used as context for code generation.
+    """
+    try:
+        # DuckDuckGo API endpoint (free, no API key required)
+        async with httpx.AsyncClient() as client:
+            # Using DuckDuckGo's HTML API
+            params = {
+                "q": query,
+                "format": "json",
+            }
+
+            headers = {
+                "User-Agent": "RyzeCanvas"
+            }
+
+            response = await client.get(
+                "https://api.duckduckgo.com/",
+                params=params,
+                headers=headers,
+                timeout=10.0
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Failed to search the web"
+                )
+
+            data = response.json()
+
+            return {
+                "success": True,
+                "query": query,
+                "results": {
+                    "abstract": data.get("AbstractText", ""),
+                    "related_topics": [
+                        {
+                            "name": topic.get("Name", ""),
+                            "description": topic.get("Text", "")
+                        }
+                        for topic in data.get("RelatedTopics", [])[:5]
+                    ],
+                    "heading": data.get("Heading", "")
+                }
+            }
+
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=status.HTTP_408_REQUEST_TIMEOUT,
+            detail="Web search timed out"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Web search failed: {str(e)}"
+        )
+
+
+class FileUploadResponse(BaseModel):
+    """Response for file upload."""
+    success: bool
+    filename: str
+    size: int
+    content_type: str
+
+
+@router.post("/upload-file", response_model=FileUploadResponse)
+async def upload_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Upload a file (image, component code, design file) for UI generation context.
+
+    **Requires:** Authentication
+
+    Accepted file types:
+    - Code: .js, .jsx, .ts, .tsx
+    - Images: .png, .jpg, .jpeg
+    - Design: .figma (metadata only)
+
+    Returns file metadata that can be used with the UI generation.
+    """
+    # Restrict file types
+    allowed_extensions = {'.js', '.jsx', '.ts', '.tsx', '.png', '.jpg', '.jpeg', '.figma'}
+
+    # Get file extension
+    file_ext = None
+    if '.' in file.filename:
+        file_ext = '.' + file.filename.split('.')[-1].lower()
+
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type not allowed. Accepted types: {', '.join(allowed_extensions)}"
+        )
+
+    # Check file size (limit to 5MB)
+    content = await file.read()
+    file_size = len(content)
+
+    if file_size > 5 * 1024 * 1024:  # 5MB
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File size exceeds 5MB limit"
+        )
+
+    return {
+        "success": True,
+        "filename": file.filename,
+        "size": file_size,
+        "content_type": file.content_type or "application/octet-stream"
     }

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { AIModel } from "@/components/ProviderSelector";
 
 interface UIState {
   sidebarOpen: boolean;
@@ -8,6 +9,10 @@ interface UIState {
   setGithubConnected: (connected: boolean) => void;
   theme: string;
   toggleTheme: () => void;
+  selectedModel: AIModel;
+  setSelectedModel: (model: AIModel) => void;
+  githubModal: boolean;
+  setGithubModal: (open: boolean) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -18,4 +23,8 @@ export const useUIStore = create<UIState>((set) => ({
   setGithubConnected: (connected) => set({ githubConnected: connected }),
   theme: "dark",
   toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
+  selectedModel: { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", provider: "gemini" },
+  setSelectedModel: (model) => set({ selectedModel: model }),
+  githubModal: false,
+  setGithubModal: (open) => set({ githubModal: open }),
 }));

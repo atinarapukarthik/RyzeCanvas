@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuthStore } from "@/stores/authStore";
 import { useUIStore } from "@/stores/uiStore";
-import { createProject } from "@/lib/api";
+import { createProject, searchWeb, uploadFile, updateProject, streamChat } from "@/lib/api";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -28,7 +28,7 @@ interface Message {
 
 export default function Studio() {
     const { user, isAuthenticated, logout } = useAuthStore();
-    const { githubConnected, setGithubConnected } = useUIStore();
+    const { githubConnected, setGithubConnected, selectedModel, setSelectedModel, githubModal, setGithubModal } = useUIStore();
     const router = useRouter();
 
     const [messages, setMessages] = useState<Message[]>([
@@ -38,7 +38,8 @@ export default function Studio() {
     const [generating, setGenerating] = useState(false);
     const [thinkingSteps, setThinkingSteps] = useState<string[]>([]);
     const [thinkingOpen, setThinkingOpen] = useState(false);
-    const [searchingWeb] = useState(false);
+    const [searchingWeb, setSearchingWeb] = useState(false);
+    const [webSearchEnabled, setWebSearchEnabled] = useState(false);
     const [activeTab, setActiveTab] = useState<'preview' | 'code' | 'diff'>('preview');
     const [generatedCode, setGeneratedCode] = useState('');
     const [editableCode, setEditableCode] = useState('');
@@ -47,11 +48,14 @@ export default function Studio() {
     const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
     const [chatMode, setChatMode] = useState<'chat' | 'plan'>('chat');
     const [framework, setFramework] = useState<'react' | 'nextjs'>('react');
-    const [githubModal, setGithubModal] = useState(false);
     const [repoUrl, setRepoUrl] = useState('');
-    const [selectedModel, setSelectedModel] = useState<AIModel>({ id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", provider: "gemini" });
+    const [chatCollapsed, setChatCollapsed] = useState(false);
+    const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+    const [projectId, setProjectId] = useState<string>('');
 
     const chatEndRef = useRef<HTMLDivElement>(null);
+    const abortControllerRef = useRef<AbortController | null>(null);
+    const streamingMessageRef = useRef<string>('');
 
     useEffect(() => {
         if (!isAuthenticated && typeof window !== 'undefined') {
@@ -73,50 +77,161 @@ export default function Studio() {
         const prompt = input;
         setInput('');
 
-        if (chatMode === 'plan') {
-            setMessages((m) => [...m, { role: 'user', content: `[Plan] ${prompt}` }]);
-            setGenerating(true);
-            await new Promise((r) => setTimeout(r, 1500));
-            setMessages((m) => [...m, {
-                role: 'ai',
-                content: `## Plan for: "${prompt}"\n\n1. **Component Structure** — Break into Header, Content, and Footer\n2. **State Management** — Use local state for form, Zustand for global\n3. **Styling** — Tailwind with glassmorphism cards\n4. **Animations** — Framer Motion for enter/exit\n5. **Accessibility** — ARIA labels, keyboard nav\n\nReady to implement? Switch to Chat mode and say "Build it".`,
-            }]);
-            setGenerating(false);
-            return;
-        }
+        // Determine the orchestration mode
+        const mode = chatMode === 'plan' ? 'plan' : 'chat';
+        const isGenerateRequest = chatMode === 'chat' && (
+            prompt.toLowerCase().includes('build') ||
+            prompt.toLowerCase().includes('generate') ||
+            prompt.toLowerCase().includes('create') ||
+            prompt.toLowerCase().includes('make') ||
+            prompt.toLowerCase().includes('design')
+        );
+        const orchestrationMode = isGenerateRequest ? 'generate' : mode;
 
-        setMessages((m) => [...m, { role: 'user', content: prompt }]);
+        // Add user message
+        setMessages((m) => [...m, {
+            role: 'user',
+            content: chatMode === 'plan' ? `[Plan] ${prompt}` : prompt,
+        }]);
         setGenerating(true);
         setThinkingSteps([]);
         setThinkingOpen(true);
+        streamingMessageRef.current = '';
+
+        // Cancel any existing stream
+        abortControllerRef.current?.abort();
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+
+        // Web search context
+        let webSearchContext: string | undefined;
+        if (webSearchEnabled) {
+            setSearchingWeb(true);
+            setThinkingSteps((s) => [...s, 'Searching the web...']);
+            try {
+                const searchResults = await searchWeb(prompt);
+                setSearchingWeb(false);
+                webSearchContext = searchResults.results?.abstract || '';
+                if (webSearchContext) {
+                    setMessages((m) => [...m, {
+                        role: 'ai',
+                        content: webSearchContext!,
+                        isSearching: true,
+                    }]);
+                }
+            } catch {
+                setSearchingWeb(false);
+                toast.warning("Web search failed, continuing without search results");
+            }
+        }
+
+        // Build conversation history from messages
+        const conversationHistory = messages.map((m) => ({
+            role: m.role,
+            content: m.content,
+        }));
+
+        // Add a placeholder AI message for streaming tokens
+        const streamMsgIndex = { current: -1 };
+        setMessages((m) => {
+            streamMsgIndex.current = m.length;
+            return [...m, { role: 'ai' as const, content: '', isThinking: true }];
+        });
 
         try {
-            const project = await createProject(prompt, {
+            await streamChat({
+                prompt,
+                mode: orchestrationMode,
                 provider: selectedModel.provider,
-                model: selectedModel.id
+                model: selectedModel.id,
+                conversationHistory,
+                webSearchContext,
+                signal: abortController.signal,
+
+                onStep: (step) => {
+                    setThinkingSteps((s) => [...s, step]);
+                },
+
+                onToken: (token) => {
+                    streamingMessageRef.current += token;
+                    const currentText = streamingMessageRef.current;
+                    setMessages((m) => {
+                        const updated = [...m];
+                        const idx = streamMsgIndex.current;
+                        if (idx >= 0 && idx < updated.length) {
+                            updated[idx] = { ...updated[idx], content: currentText, isThinking: false };
+                        }
+                        return updated;
+                    });
+                },
+
+                onCode: (code) => {
+                    const codeStr = typeof code === 'string' ? code : JSON.stringify(code, null, 2);
+                    setGeneratedCode(codeStr);
+                    setActiveTab('code');
+
+                    // Save as project
+                    createProject(prompt, {
+                        code: codeStr,
+                        provider: selectedModel.provider,
+                        model: selectedModel.id,
+                    }).then((project) => {
+                        setProjectId(project.id);
+                    }).catch(() => {
+                        // Project save failed silently — code is still shown
+                    });
+                },
+
+                onError: (error) => {
+                    toast.error("AI Error", { description: error });
+                },
+
+                onDone: (meta) => {
+                    // Append completion info for generate mode
+                    if (orchestrationMode === 'generate' && meta?.success) {
+                        const count = meta.components_count || 0;
+                        const retries = meta.retries || 0;
+                        let suffix = `\n\nGenerated **${count} components** using **${selectedModel.name}**`;
+                        if (retries > 0) suffix += ` (validated after ${retries} retries)`;
+                        suffix += '. Check the Code tab.';
+
+                        streamingMessageRef.current += suffix;
+                        const finalText = streamingMessageRef.current;
+                        setMessages((m) => {
+                            const updated = [...m];
+                            const idx = streamMsgIndex.current;
+                            if (idx >= 0 && idx < updated.length) {
+                                updated[idx] = { ...updated[idx], content: finalText };
+                            }
+                            return updated;
+                        });
+                    }
+                },
             });
-
-            // Mocking the steps for now since backend create_project doesn't return steps yet
-            const mockSteps = ['Thinking...', 'Planning layout...', 'Generating React code...', 'Finalizing components...'];
-            for (const step of mockSteps) {
-                setThinkingSteps((s) => [...s, step]);
-                await new Promise((r) => setTimeout(r, 400));
-            }
-
-            const code = project.code;
-            setGeneratedCode(code);
-            setMessages((m) => [...m, {
-                role: 'ai',
-                content: `Done! Your component has been generated using **${selectedModel.name}**. Check the Preview and Code tabs.`,
-                steps: mockSteps,
-            }]);
         } catch (error: unknown) {
-            toast.error("Generation failed", { description: error instanceof Error ? error.message : "An unknown error occurred" });
-            setMessages((m) => [...m, { role: 'ai', content: "Sorry, I encountered an error while generating your UI." }]);
+            if ((error as Error).name !== 'AbortError') {
+                toast.error("Chat failed", {
+                    description: error instanceof Error ? error.message : "An unknown error occurred",
+                });
+                setMessages((m) => {
+                    const updated = [...m];
+                    const idx = streamMsgIndex.current;
+                    if (idx >= 0 && idx < updated.length) {
+                        updated[idx] = {
+                            ...updated[idx],
+                            content: "Sorry, I encountered an error. Please check your API keys and try again.",
+                            isThinking: false,
+                        };
+                    }
+                    return updated;
+                });
+            }
         } finally {
             setGenerating(false);
             setThinkingOpen(false);
-            setActiveTab('code');
+            setSearchingWeb(false);
+            setUploadedFiles([]);
+            abortControllerRef.current = null;
         }
     };
 
@@ -143,10 +258,21 @@ export default function Studio() {
         toast.success('GitHub connected!', { description: repoUrl });
     };
 
-    const handleSaveCode = () => {
+    const handleSaveCode = async () => {
         setGeneratedCode(editableCode);
         setIsEditing(false);
-        toast.success('Code saved!');
+
+        // Update the project in the backend if projectId exists
+        if (projectId) {
+            try {
+                await updateProject(projectId, { code_json: editableCode });
+                toast.success('Code saved to project!');
+            } catch (error) {
+                toast.error('Failed to save code', { description: error instanceof Error ? error.message : "Unknown error" });
+            }
+        } else {
+            toast.success('Code saved locally!');
+        }
     };
 
     const handleCopyCode = () => {
@@ -154,200 +280,195 @@ export default function Studio() {
         toast.success('Copied to clipboard!');
     };
 
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
+
+        setUploadedFiles((prev) => [...prev, ...files]);
+        const fileNames = files.map((f) => f.name).join(', ');
+        setMessages((m) => [...m, {
+            role: 'user',
+            content: `📎 Uploaded: ${fileNames}`
+        }]);
+        toast.success(`Uploaded ${files.length} file(s)`);
+
+        // Reset input
+        e.target.value = '';
+    };
+
+    const handleRemoveFile = (fileName: string) => {
+        setUploadedFiles((prev) => prev.filter((f) => f.name !== fileName));
+    };
+
     return (
-        <div className="h-screen flex flex-col bg-background overflow-hidden font-sans">
-            {/* Top Navigation Bar */}
-            <header className="flex items-center h-12 px-4 border-b border-border shrink-0 gap-3 bg-sidebar/50 backdrop-blur-md">
-                <Link href="/" className="flex items-center gap-2 mr-4">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary">
-                        <Zap className="h-3.5 w-3.5 text-primary-foreground" />
-                    </div>
-                    <span className="font-bold text-sm text-foreground tracking-tight">RyzeCanvas</span>
-                </Link>
-
-                <div className="h-5 w-px bg-border" />
-
-                <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors">
-                    <FolderOpen className="h-3.5 w-3.5" /> Projects
-                </button>
-                <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors">
-                    <Clock className="h-3.5 w-3.5" /> History
-                </button>
-
-                <div className="flex-1" />
-
-                {/* Multi-AI Provider Selector */}
-                <ProviderSelector
-                    selectedModelId={selectedModel.id}
-                    onSelectModel={(m) => setSelectedModel(m)}
-                />
-
-                <div className="h-5 w-px bg-border" />
-
-                {/* GitHub */}
-                <button
-                    onClick={() => githubConnected ? setGithubConnected(false) : setGithubModal(true)}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs hover:bg-secondary/50 transition-colors"
-                >
-                    <GitBranch className={`h-3.5 w-3.5 ${githubConnected ? 'text-success' : 'text-muted-foreground'}`} />
-                    <span className={githubConnected ? 'text-success' : 'text-muted-foreground hidden sm:inline'}>
-                        {githubConnected ? 'Connected' : 'Connect GitHub'}
-                    </span>
-                    <span className={`h-1.5 w-1.5 rounded-full ${githubConnected ? 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-muted-foreground/40'}`} />
-                </button>
-
-                <div className="h-5 w-px bg-border" />
-
-                {/* User */}
-                <div className="flex items-center gap-2">
-                    <div className="h-6 w-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary border border-primary/30">
-                        {user?.name?.charAt(0) || 'U'}
-                    </div>
-                    <span className="text-xs text-foreground font-medium hidden lg:block">{user?.name || 'User'}</span>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { logout(); router.push('/'); }}>
-                        <LogOut className="h-3.5 w-3.5" />
-                    </Button>
-                </div>
-            </header>
-
+        <div className="flex flex-col h-full bg-background overflow-hidden font-sans">
             {/* Main Content */}
             <div className="flex-1 flex min-h-0 bg-secondary/10">
                 {/* Chat Panel */}
-                <div className="w-[440px] border-r border-border flex flex-col bg-background/50 backdrop-blur-sm">
+                <div className={`${chatCollapsed ? 'w-12' : 'w-[440px]'} border-r border-border flex flex-col min-h-0 bg-background/50 backdrop-blur-sm transition-all duration-300`}>
                     {/* Chat/Plan toggle */}
                     <div className="flex items-center gap-2 px-4 h-10 border-b border-border shrink-0">
-                        <div className="flex rounded-md bg-secondary/50 p-0.5">
-                            <button
-                                onClick={() => setChatMode('chat')}
-                                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded transition-all ${chatMode === 'chat' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                                    }`}
-                            >
-                                <MessageSquare className="h-3 w-3" /> Chat
+                        {chatCollapsed ? (
+                            <button onClick={() => setChatCollapsed(false)} className="text-muted-foreground hover:text-foreground transition-colors" title="Expand chat">
+                                <ChevronDown className="h-4 w-4 rotate-90" />
                             </button>
-                            <button
-                                onClick={() => setChatMode('plan')}
-                                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded transition-all ${chatMode === 'plan' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                                    }`}
-                            >
-                                <Lightbulb className="h-3 w-3" /> Plan
-                            </button>
-                        </div>
-                        <div className="flex-1" />
-                        <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-tighter">Framework</span>
-                            <button
-                                onClick={() => setFramework(framework === 'react' ? 'nextjs' : 'react')}
-                                className="text-[10px] bg-secondary px-2 py-0.5 rounded border border-border hover:border-primary/50 transition-colors"
-                            >
-                                {framework === 'react' ? 'React' : 'Next.js'}
-                            </button>
-                        </div>
+                        ) : (
+                            <>
+                                <div className="flex rounded-md bg-secondary/50 p-0.5">
+                                    <button
+                                        onClick={() => setChatMode('chat')}
+                                        className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded transition-all ${chatMode === 'chat' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                                            }`}
+                                    >
+                                        <MessageSquare className="h-3 w-3" /> Chat
+                                    </button>
+                                    <button
+                                        onClick={() => setChatMode('plan')}
+                                        className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded transition-all ${chatMode === 'plan' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                                            }`}
+                                    >
+                                        <Lightbulb className="h-3 w-3" /> Plan
+                                    </button>
+                                </div>
+                                <div className="flex-1" />
+                                <button
+                                    onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+                                    className={`px-2 py-1 text-xs rounded transition-all ${webSearchEnabled ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                                    title="Toggle web search"
+                                >
+                                    <Globe className="h-3 w-3" />
+                                </button>
+                                <button onClick={() => setChatCollapsed(true)} className="text-muted-foreground hover:text-foreground transition-colors" title="Collapse chat">
+                                    <ChevronDown className="h-4 w-4 -rotate-90" />
+                                </button>
+                            </>
+                        )}
                     </div>
 
                     {/* Messages */}
-                    <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
-                        <AnimatePresence>
-                            {messages.map((msg, i) => (
-                                <motion.div
-                                    key={i}
-                                    initial={{ opacity: 0, y: 8 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
-                                >
-                                    <div className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 border ${msg.role === 'ai' ? 'bg-primary/5 text-primary border-primary/20' : 'bg-secondary text-foreground border-border'
-                                        }`}>
-                                        {msg.role === 'ai' ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
-                                    </div>
-                                    <div className={`max-w-[85%] rounded-xl px-4 py-2.5 text-sm leading-relaxed ${msg.role === 'user' ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/10' : 'glass border-white/5'
-                                        }`}>
-                                        {msg.isSearching && (
-                                            <div className="flex items-center gap-1.5 text-xs text-primary mb-2">
-                                                <Search className="h-3 w-3" /> Web search results
-                                            </div>
-                                        )}
-                                        <div className="space-y-2 whitespace-pre-wrap">
-                                            {msg.content}
-                                        </div>
-                                    </div>
-                                </motion.div>
-                            ))}
-                        </AnimatePresence>
-
-                        {/* Thinking / Searching */}
-                        {generating && (
-                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass rounded-xl p-3 border-primary/20">
-                                <button onClick={() => setThinkingOpen(!thinkingOpen)} className="flex items-center gap-2 text-sm w-full outline-none">
-                                    {searchingWeb ? (
-                                        <>
-                                            <Globe className="h-3.5 w-3.5 text-accent animate-glow-pulse" />
-                                            <span className="text-accent font-medium">Searching the web…</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Loader2 className="h-3.5 w-3.5 text-primary animate-spin" />
-                                            <span className="text-primary font-medium">Ryze is thinking…</span>
-                                        </>
-                                    )}
-                                    <ChevronDown className={`h-3.5 w-3.5 ml-auto text-muted-foreground transition-transform ${thinkingOpen ? 'rotate-180' : ''}`} />
-                                </button>
+                    {!chatCollapsed && (
+                        <>
+                            <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
                                 <AnimatePresence>
-                                    {thinkingOpen && (
-                                        <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
-                                            <div className="pt-2 pl-6 space-y-1.5">
-                                                {thinkingSteps.map((step, i) => (
-                                                    <motion.p
-                                                        key={i}
-                                                        initial={{ opacity: 0, x: -5 }}
-                                                        animate={{ opacity: 1, x: 0 }}
-                                                        className="text-[11px] text-muted-foreground font-mono flex items-center gap-2"
-                                                    >
-                                                        <span className="h-1 w-1 rounded-full bg-primary/60 shrink-0" />
-                                                        {step}
-                                                    </motion.p>
-                                                ))}
-                                                {generating && (
-                                                    <div className="flex gap-1 pt-1 ml-3">
-                                                        {[0, 1, 2].map((i) => (
-                                                            <motion.span
-                                                                key={i}
-                                                                className="h-0.5 w-0.5 rounded-full bg-primary/40"
-                                                                animate={{ opacity: [0.3, 1, 0.3] }}
-                                                                transition={{ repeat: Infinity, duration: 1, delay: i * 0.2 }}
-                                                            />
-                                                        ))}
+                                    {messages.map((msg, i) => (
+                                        <motion.div
+                                            key={i}
+                                            initial={{ opacity: 0, y: 8 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
+                                        >
+                                            <div className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 border ${msg.role === 'ai' ? 'bg-primary/5 text-primary border-primary/20' : 'bg-secondary text-foreground border-border'
+                                                }`}>
+                                                {msg.role === 'ai' ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
+                                            </div>
+                                            <div className={`max-w-[85%] rounded-xl px-4 py-2.5 text-sm leading-relaxed ${msg.role === 'user' ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/10' : 'glass border-white/5'
+                                                }`}>
+                                                {msg.isSearching && (
+                                                    <div className="flex items-center gap-1.5 text-xs text-primary mb-2">
+                                                        <Search className="h-3 w-3" /> Web search results
                                                     </div>
                                                 )}
+                                                <div className="space-y-2 whitespace-pre-wrap">
+                                                    {msg.content}
+                                                </div>
                                             </div>
                                         </motion.div>
-                                    )}
+                                    ))}
                                 </AnimatePresence>
-                            </motion.div>
-                        )}
-                        <div ref={chatEndRef} />
-                    </div>
 
-                    {/* Input */}
-                    <div className="p-3 border-t border-border bg-background">
-                        <div className="flex items-end gap-2 glass rounded-xl px-3 py-2 border-primary/10 focus-within:border-primary/30 transition-colors">
-                            <Paperclip className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-foreground transition-colors mb-1.5" />
-                            <textarea
-                                value={input}
-                                onChange={(e) => setInput(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                                placeholder={chatMode === 'plan' ? 'Ask for architectural advice...' : 'Describe a component...'}
-                                className="flex-1 bg-transparent border-0 shadow-none focus:ring-0 p-0 text-sm outline-none resize-none min-h-[20px] max-h-[120px] py-1"
-                                rows={1}
-                            />
-                            <div className="flex items-center gap-1 mb-0.5">
-                                <Button variant="ghost" size="icon" onClick={handleSend} disabled={generating || !input.trim()} className="h-8 w-8 shrink-0 rounded-lg hover:bg-primary/10 hover:text-primary">
-                                    <Send className="h-4.5 w-4.5" />
-                                </Button>
+                                {/* Thinking / Searching */}
+                                {generating && (
+                                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass rounded-xl p-3 border-primary/20">
+                                        <button onClick={() => setThinkingOpen(!thinkingOpen)} className="flex items-center gap-2 text-sm w-full outline-none">
+                                            {searchingWeb ? (
+                                                <>
+                                                    <Globe className="h-3.5 w-3.5 text-accent animate-glow-pulse" />
+                                                    <span className="text-accent font-medium">Searching the web…</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Loader2 className="h-3.5 w-3.5 text-primary animate-spin" />
+                                                    <span className="text-primary font-medium">Ryze is thinking…</span>
+                                                </>
+                                            )}
+                                            <ChevronDown className={`h-3.5 w-3.5 ml-auto text-muted-foreground transition-transform ${thinkingOpen ? 'rotate-180' : ''}`} />
+                                        </button>
+                                        <AnimatePresence>
+                                            {thinkingOpen && (
+                                                <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
+                                                    <div className="pt-2 pl-6 space-y-1.5">
+                                                        {thinkingSteps.map((step, i) => (
+                                                            <motion.p
+                                                                key={i}
+                                                                initial={{ opacity: 0, x: -5 }}
+                                                                animate={{ opacity: 1, x: 0 }}
+                                                                className="text-[11px] text-muted-foreground font-mono flex items-center gap-2"
+                                                            >
+                                                                <span className="h-1 w-1 rounded-full bg-primary/60 shrink-0" />
+                                                                {step}
+                                                            </motion.p>
+                                                        ))}
+                                                        {generating && (
+                                                            <div className="flex gap-1 pt-1 ml-3">
+                                                                {[0, 1, 2].map((i) => (
+                                                                    <motion.span
+                                                                        key={i}
+                                                                        className="h-0.5 w-0.5 rounded-full bg-primary/40"
+                                                                        animate={{ opacity: [0.3, 1, 0.3] }}
+                                                                        transition={{ repeat: Infinity, duration: 1, delay: i * 0.2 }}
+                                                                    />
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </motion.div>
+                                            )}
+                                        </AnimatePresence>
+                                    </motion.div>
+                                )}
+                                <div ref={chatEndRef} />
                             </div>
-                        </div>
-                        <p className="text-[9px] text-muted-foreground mt-2 text-center uppercase tracking-widest font-semibold opacity-60">
-                            {chatMode === 'plan' ? 'Plan mode active' : 'Next.js & Tailwind CSS enabled'}
-                        </p>
-                    </div>
+
+                            {/* Input */}
+                            <div className="p-3 border-t border-border bg-background">
+                                {uploadedFiles.length > 0 && (
+                                    <div className="mb-2 flex flex-wrap gap-1.5">
+                                        {uploadedFiles.map((file) => (
+                                            <div key={file.name} className="bg-secondary/50 rounded px-2 py-1 text-xs flex items-center gap-1.5 border border-border">
+                                                <FileCode className="h-3 w-3 text-primary" />
+                                                <span className="truncate max-w-[200px]">{file.name}</span>
+                                                <button onClick={() => handleRemoveFile(file.name)} className="ml-1 hover:text-destructive transition-colors">
+                                                    <X className="h-3 w-3" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="flex items-end gap-2 glass rounded-xl px-3 py-2 border-primary/10 focus-within:border-primary/30 transition-colors">
+                                    <input type="file" id="file-upload" onChange={handleFileUpload} multiple className="hidden" accept=".js,.jsx,.ts,.tsx,.png,.jpg,.jpeg,.figma" />
+                                    <label htmlFor="file-upload" className="cursor-pointer">
+                                        <Paperclip className="h-4 w-4 text-muted-foreground hover:text-foreground transition-colors mb-1.5" />
+                                    </label>
+                                    <textarea
+                                        value={input}
+                                        onChange={(e) => setInput(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                                        placeholder={chatMode === 'plan' ? 'Ask for architectural advice...' : 'Describe a component...'}
+                                        className="flex-1 bg-transparent border-0 shadow-none focus:ring-0 p-0 text-sm outline-none resize-none min-h-[20px] max-h-[120px] py-1"
+                                        rows={1}
+                                    />
+                                    <div className="flex items-center gap-1 mb-0.5">
+                                        <Button variant="ghost" size="icon" onClick={handleSend} disabled={generating || !input.trim()} className="h-8 w-8 shrink-0 rounded-lg hover:bg-primary/10 hover:text-primary">
+                                            <Send className="h-4.5 w-4.5" />
+                                        </Button>
+                                    </div>
+                                </div>
+                                <p className="text-[9px] text-muted-foreground mt-2 text-center uppercase tracking-widest font-semibold opacity-60">
+                                    {chatMode === 'plan' ? 'Plan mode active' : 'Next.js & Tailwind CSS enabled'}
+                                </p>
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 {/* Preview / Code Panel */}

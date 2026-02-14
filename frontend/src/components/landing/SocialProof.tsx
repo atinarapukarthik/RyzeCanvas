@@ -1,116 +1,105 @@
 "use client";
 
-import { motion } from 'framer-motion';
-import { useRef } from 'react';
+import { motion } from "framer-motion";
 
-const companies = [
-    { name: 'Stripe', opacity: 0.5 },
-    { name: 'Vercel', opacity: 0.6 },
-    { name: 'Linear', opacity: 0.55 },
-    { name: 'Figma', opacity: 0.5 },
-    { name: 'Notion', opacity: 0.6 },
-    { name: 'OpenAI', opacity: 0.55 },
+const logos = [
+    "Vercel",
+    "Stripe",
+    "Linear",
+    "Notion",
+    "Figma",
+    "OpenAI",
+    "Supabase",
+    "Planetscale",
 ];
 
-export function SocialProof() {
+/* Simple SVG-text logos to avoid external images */
+function LogoMark({ name }: { name: string }) {
     return (
-        <section className="relative py-20 border-y border-border/30 overflow-hidden">
-            {/* Subtle background glow */}
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/5 to-transparent" />
+        <span className="text-[15px] font-display font-semibold tracking-wide text-foreground/25 transition-colors duration-500 group-hover:text-foreground/45 select-none whitespace-nowrap">
+            {name}
+        </span>
+    );
+}
 
-            <div className="container relative z-10">
+export function SocialProof() {
+    const doubled = [...logos, ...logos];
+
+    return (
+        <section className="relative py-20 overflow-hidden">
+            {/* Top divider line */}
+            <div className="absolute inset-x-0 top-0">
+                <div className="mx-auto max-w-5xl h-px bg-gradient-to-r from-transparent via-foreground/[0.06] to-transparent" />
+            </div>
+
+            {/* Label */}
+            <motion.p
+                className="text-center text-[11px] uppercase tracking-[0.25em] text-foreground/30 font-medium mb-10"
+                initial={{ opacity: 0 }}
+                whileInView={{ opacity: 1 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.5 }}
+            >
+                Trusted by teams at
+            </motion.p>
+
+            {/* Marquee */}
+            <div className="relative fade-x">
                 <motion.div
-                    className="text-center mb-12"
-                    initial={{ opacity: 0, y: 20 }}
-                    whileInView={{ opacity: 1, y: 0 }}
+                    className="flex gap-16 items-center w-max"
+                    initial={{ opacity: 0 }}
+                    whileInView={{ opacity: 1 }}
                     viewport={{ once: true }}
                     transition={{ duration: 0.6 }}
                 >
-                    <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground/60 font-semibold mb-2">
-                        Trusted by teams at
-                    </p>
+                    <div
+                        className="flex gap-16 items-center animate-marquee"
+                        style={{ "--marquee-duration": "35s" } as React.CSSProperties}
+                    >
+                        {doubled.map((name, i) => (
+                            <div key={`${name}-${i}`} className="group px-2">
+                                <LogoMark name={name} />
+                            </div>
+                        ))}
+                    </div>
+                </motion.div>
+            </div>
+
+            {/* Stats */}
+            <motion.div
+                className="mt-20 grid grid-cols-2 md:grid-cols-4 gap-8 max-w-4xl mx-auto px-4"
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.5, delay: 0.2 }}
+            >
+                {[
+                    { value: "1M+", label: "Lines generated" },
+                    { value: "50K+", label: "Developers" },
+                    { value: "500+", label: "Components" },
+                    { value: "99.9%", label: "Uptime" },
+                ].map((stat, i) => (
                     <motion.div
-                        className="h-px w-24 mx-auto bg-gradient-to-r from-transparent via-primary/40 to-transparent"
-                        initial={{ scaleX: 0 }}
-                        whileInView={{ scaleX: 1 }}
+                        key={stat.label}
+                        className="text-center"
+                        initial={{ opacity: 0, y: 16 }}
+                        whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
-                        transition={{ duration: 0.8, delay: 0.2 }}
-                    />
-                </motion.div>
+                        transition={{ delay: 0.3 + i * 0.07 }}
+                    >
+                        <div className="font-display text-3xl md:text-4xl font-bold tracking-tight gradient-text mb-1">
+                            {stat.value}
+                        </div>
+                        <div className="text-xs text-foreground/35 font-medium uppercase tracking-wider">
+                            {stat.label}
+                        </div>
+                    </motion.div>
+                ))}
+            </motion.div>
 
-                <div className="flex items-center justify-center gap-8 md:gap-16 lg:gap-20 flex-wrap px-4">
-                    {companies.map((company, i) => (
-                        <motion.div
-                            key={company.name}
-                            className="relative group"
-                            initial={{ opacity: 0, y: 20 }}
-                            whileInView={{ opacity: 1, y: 0 }}
-                            viewport={{ once: true }}
-                            transition={{ delay: i * 0.1, duration: 0.5 }}
-                        >
-                            {/* Glow effect on hover */}
-                            <motion.div
-                                className="absolute inset-0 bg-primary/0 group-hover:bg-primary/5 rounded-lg blur-xl transition-colors duration-500"
-                                style={{ scale: 1.5 }}
-                            />
-
-                            <motion.span
-                                className="relative block text-xl md:text-2xl font-bold tracking-tight select-none transition-all duration-300"
-                                style={{
-                                    opacity: company.opacity,
-                                    color: 'hsl(var(--foreground))',
-                                }}
-                                whileHover={{
-                                    opacity: 1,
-                                    scale: 1.1,
-                                    color: 'hsl(var(--primary))',
-                                }}
-                                transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                            >
-                                {company.name}
-                            </motion.span>
-                        </motion.div>
-                    ))}
-                </div>
-
-                {/* Stats section */}
-                <motion.div
-                    className="mt-20 grid grid-cols-2 md:grid-cols-4 gap-8 max-w-4xl mx-auto"
-                    initial={{ opacity: 0, y: 30 }}
-                    whileInView={{ opacity: 1, y: 0 }}
-                    viewport={{ once: true }}
-                    transition={{ duration: 0.7, delay: 0.6 }}
-                >
-                    {[
-                        { label: 'Code Generated', value: '1M+', suffix: 'lines' },
-                        { label: 'Active Users', value: '50K+', suffix: 'developers' },
-                        { label: 'Components', value: '500+', suffix: 'templates' },
-                        { label: 'Success Rate', value: '99.9%', suffix: 'uptime' },
-                    ].map((stat, i) => (
-                        <motion.div
-                            key={stat.label}
-                            className="text-center group"
-                            initial={{ opacity: 0, scale: 0.9 }}
-                            whileInView={{ opacity: 1, scale: 1 }}
-                            viewport={{ once: true }}
-                            transition={{ delay: 0.7 + i * 0.1 }}
-                        >
-                            <motion.div
-                                className="text-3xl md:text-4xl font-black gradient-text mb-1"
-                                whileHover={{ scale: 1.1 }}
-                                transition={{ type: 'spring', stiffness: 400 }}
-                            >
-                                {stat.value}
-                            </motion.div>
-                            <div className="text-xs text-muted-foreground/60 font-medium uppercase tracking-wider">
-                                {stat.label}
-                            </div>
-                            <div className="text-xs text-muted-foreground/40 mt-1">
-                                {stat.suffix}
-                            </div>
-                        </motion.div>
-                    ))}
-                </motion.div>
+            {/* Bottom divider */}
+            <div className="absolute inset-x-0 bottom-0">
+                <div className="mx-auto max-w-5xl h-px bg-gradient-to-r from-transparent via-foreground/[0.06] to-transparent" />
             </div>
         </section>
     );

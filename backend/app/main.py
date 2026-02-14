@@ -18,14 +18,14 @@ async def lifespan(app: FastAPI):
     Runs initialization tasks on startup.
     """
     # Initialize database on startup
-    print("🚀 Starting RyzeCanvas Backend...")
+    print("[STARTUP] Starting RyzeCanvas Backend...")
     try:
         await init_db()
     except Exception as e:
-        print(f"❌ Database connection failed: {e}")
-        print("⚠️  Server is starting without a database connection. Please check your DATABASE_URL in .env")
+        print(f"[ERROR] Database connection failed: {e}")
+        print("[WARN] Server is starting without a database connection. Please check your DATABASE_URL in .env")
     yield
-    print("👋 Shutting down RyzeCanvas Backend...")
+    print("[SHUTDOWN] Shutting down RyzeCanvas Backend...")
 
 
 # Create FastAPI application

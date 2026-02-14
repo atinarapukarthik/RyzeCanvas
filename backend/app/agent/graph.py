@@ -15,6 +15,11 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from app.agent.rag import retrieve_context
 from app.core.component_library import ALLOWED_COMPONENTS
 from app.agent.validator import validate_dhdc
+from app.agent.system_prompt import (
+    get_generate_plan_prompt,
+    get_generate_code_prompt,
+    get_retry_context,
+)
 
 
 # Define the Agent State
@@ -63,14 +68,14 @@ def retrieve_node(state: AgentState) -> AgentState:
     """
     Node 1: Retrieve relevant component documentation using RAG.
     """
-    print("🔍 [RETRIEVE NODE] Fetching relevant component context...")
+    print("[RETRIEVE] Fetching relevant component context...")
     
     user_input = state["input"]
     
     # Retrieve top 3 relevant component docs
     context = retrieve_context(user_input, top_k=3)
     
-    print(f"✅ Retrieved {len(context)} chars of context")
+    print(f"[OK] Retrieved {len(context)} chars of context")
     
     return {
         **state,
@@ -84,34 +89,12 @@ def plan_node(state: AgentState) -> AgentState:
     Node 2: Create a high-level layout plan using the LLM.
     System Prompt: "You are a UI Architect. Plan a layout using ONLY the provided components."
     """
-    print("📐 [PLAN NODE] Creating high-level layout plan...")
+    print("[PLAN] Creating high-level layout plan...")
     
     llm = get_llm()
-    
-    system_prompt = f"""You are a professional UI/UX Architect for RyzeCanvas.
 
-Your task is to create a HIGH-LEVEL LAYOUT PLAN for the user's request.
+    system_prompt = get_generate_plan_prompt() + f"\n\nComponent context:\n{state['context']}"
 
-**STRICT RULES:**
-1. You MUST ONLY use components from this list: {', '.join(ALLOWED_COMPONENTS)}
-2. You MUST NOT invent new component types
-3. Create a simple, clear plan describing WHICH components to use and WHERE
-
-**Available Components:**
-{state['context']}
-
-**Output Format:**
-Write a brief plan (2-5 sentences) describing:
-- Which components to use
-- How they should be arranged
-- The overall layout structure
-
-Example Plan:
-"Create a centered card at (760, 300) containing the login form. Inside, place two Input components for email and password at (760, 400) and (760, 480). Add a primary Button below at (760, 560) for submission."
-
-Do NOT output JSON yet. Just describe the plan in natural language.
-"""
-    
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"User request: {state['input']}\n\nCreate a layout plan.")
@@ -120,7 +103,7 @@ Do NOT output JSON yet. Just describe the plan in natural language.
     response = llm.invoke(messages)
     plan = response.content.strip()
     
-    print(f"✅ Plan created: {plan[:100]}...")
+    print(f"[OK] Plan created: {plan[:100]}...")
     
     return {
         **state,
@@ -134,54 +117,20 @@ def generate_node(state: AgentState) -> AgentState:
     Node 3: Convert the plan into valid JSON.
     System Prompt: "Output VALID JSON matching the schema. Do not invent tags."
     """
-    print("🔧 [GENERATE NODE] Converting plan to JSON...")
+    print("[GENERATE] Converting plan to JSON...")
     
     llm = get_llm()
-    
+
     # Include error feedback if this is a retry
     error_feedback = ""
     if state.get("errors"):
-        error_feedback = f"\n\n**PREVIOUS ERRORS (FIX THESE):**\n" + "\n".join(state["errors"])
-    
-    system_prompt = f"""You are a code generator for RyzeCanvas.
+        error_feedback = get_retry_context(state["errors"])
 
-Convert the layout plan into VALID JSON matching this schema.
+    system_prompt = get_generate_code_prompt()
+    system_prompt += f"\n\nComponent context:\n{state['context']}\n\nLayout plan:\n{state['plan']}"
+    if error_feedback:
+        system_prompt += f"\n{error_feedback}"
 
-**CRITICAL RULES:**
-1. Output ONLY valid JSON - no markdown, no explanations
-2. ONLY use these component types: {', '.join(ALLOWED_COMPONENTS)}
-3. Do NOT invent component types like "HeroSection", "Header", "Footer", etc.
-4. If you need a container, use "Container" or "Card"
-5. Each component must have: id, type, props, position
-
-**JSON Schema:**
-{{
-  "components": [
-    {{
-      "id": "unique_id",
-      "type": "Button|Card|Input|Table|...",
-      "props": {{}},
-      "position": {{"x": 0, "y": 0}}
-    }}
-  ],
-  "layout": {{
-    "theme": "light",
-    "grid": true,
-    "gridSize": 20,
-    "canvasSize": {{"width": 1920, "height": 1080}}
-  }}
-}}
-
-**Available Component Context:**
-{state['context']}
-
-**Layout Plan:**
-{state['plan']}
-{error_feedback}
-
-Output ONLY the JSON. No markdown code blocks, no extra text.
-"""
-    
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content="Generate the JSON now:")
@@ -203,9 +152,9 @@ Output ONLY the JSON. No markdown code blocks, no extra text.
     # Parse JSON
     try:
         code_json = json.loads(raw_output)
-        print("✅ JSON parsed successfully")
+        print("[OK] JSON parsed successfully")
     except json.JSONDecodeError as e:
-        print(f"❌ JSON parse error: {e}")
+        print(f"[ERROR] JSON parse error: {e}")
         code_json = {"components": [], "layout": {}}
         return {
             **state,
@@ -231,7 +180,7 @@ def validate_node(state: AgentState) -> AgentState:
     
     If invalid, adds errors to state for retry.
     """
-    print("🛡️ [VALIDATE NODE] Validating generated JSON with D-HDC...")
+    print("[VALIDATE] Validating generated JSON with D-HDC...")
     
     code_json = state["code_json"]
     
@@ -239,13 +188,13 @@ def validate_node(state: AgentState) -> AgentState:
     is_valid, error = validate_dhdc(code_json)
     
     if is_valid:
-        print("✅ D-HDC Validation passed!")
+        print("[OK] D-HDC Validation passed!")
         return {
             **state,
             "final_output": code_json
         }
     else:
-        print(f"❌ D-HDC Validation failed:\n{error}")
+        print(f"[FAIL] D-HDC Validation failed:\n{error}")
         # Add error to state
         # We wrap in a list because 'errors' in state is Annotated[List[str], add]
         return {
@@ -271,12 +220,12 @@ def should_retry(state: AgentState) -> str:
     retry_count = state.get("retry_count", 0)
     
     if retry_count < MAX_RETRIES:
-        print(f"🔄 Retry {retry_count + 1}/{MAX_RETRIES}")
+        print(f"[RETRY] {retry_count + 1}/{MAX_RETRIES}")
         # Increment retry count
         state["retry_count"] = retry_count + 1
         return "generate"
     else:
-        print(f"❌ Max retries ({MAX_RETRIES}) reached. Stopping.")
+        print(f"[ERROR] Max retries ({MAX_RETRIES}) reached. Stopping.")
         return "end"
 
 
@@ -336,7 +285,7 @@ async def run_agent(user_prompt: str) -> Dict[str, Any]:
         >>> print(result["final_output"])
     """
     print("\n" + "="*60)
-    print("🚀 Starting RyzeCanvas AI Agent")
+    print("[AGENT] Starting RyzeCanvas AI Agent")
     print("="*60)
     
     # Build graph
@@ -357,7 +306,7 @@ async def run_agent(user_prompt: str) -> Dict[str, Any]:
     final_state = graph.invoke(initial_state)
     
     print("\n" + "="*60)
-    print("✅ Agent execution complete")
+    print("[OK] Agent execution complete")
     print("="*60)
     
     # Return results
@@ -395,10 +344,10 @@ if __name__ == "__main__":
             result = await run_agent(prompt)
             
             if result["success"]:
-                print(f"\n✅ SUCCESS (Retries: {result['retries']})")
+                print(f"\n[OK] SUCCESS (Retries: {result['retries']})")
                 print(json.dumps(result["output"], indent=2)[:500])
             else:
-                print(f"\n❌ FAILED (Retries: {result['retries']})")
+                print(f"\n[FAIL] FAILED (Retries: {result['retries']})")
                 print("Errors:", result["errors"])
     
     asyncio.run(test_graph())

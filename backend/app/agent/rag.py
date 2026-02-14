@@ -55,10 +55,10 @@ class ComponentRAG:
             # Create FAISS vector store
             self.vectorstore = FAISS.from_documents(documents, embeddings)
             
-            print(f"✅ RAG initialized with {len(documents)} component documents")
-        
+            print(f"[OK] RAG initialized with {len(documents)} component documents")
+
         except Exception as e:
-            print(f"❌ Failed to initialize RAG system: {e}")
+            print(f"[ERROR] Failed to initialize RAG system: {e}")
             raise
     
     def retrieve_context(self, query: str, top_k: int = 3) -> str:
@@ -89,7 +89,7 @@ class ComponentRAG:
             return context
         
         except Exception as e:
-            print(f"❌ RAG retrieval failed: {e}")
+            print(f"[ERROR] RAG retrieval failed: {e}")
             return ""
     
     def retrieve_with_scores(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
@@ -120,7 +120,7 @@ class ComponentRAG:
             ]
         
         except Exception as e:
-            print(f"❌ RAG retrieval with scores failed: {e}")
+            print(f"[ERROR] RAG retrieval with scores failed: {e}")
             return []
 
 
@@ -175,10 +175,10 @@ if __name__ == "__main__":
     print("=" * 60)
     
     for query in test_queries:
-        print(f"\n📝 Query: {query}")
+        print(f"\nQuery: {query}")
         print("-" * 60)
-        
+
         context = retrieve_context(query, top_k=3)
-        print(f"\n🔍 Retrieved Context:\n{context[:300]}...")  # Show first 300 chars
+        print(f"\nRetrieved Context:\n{context[:300]}...")  # Show first 300 chars
         
         print("\n" + "=" * 60)

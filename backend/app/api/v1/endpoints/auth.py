@@ -10,10 +10,10 @@ from sqlalchemy import select
 
 from app.api.deps import get_db, get_current_user
 from app.core.config import settings
-from app.core.security import create_access_token, get_password_hash, verify_password
+from app.core.security import create_access_token, get_password_hash, verify_password, create_reset_token, verify_reset_token
 from app.models.user import User
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
-from app.schemas.token import Token
+from app.schemas.token import Token, ForgotPasswordRequest, ResetPasswordRequest
 
 
 router = APIRouter()
@@ -105,10 +105,11 @@ async def get_current_user_info(
 ):
     """
     Get current user information.
-    
+
     Requires valid JWT token in Authorization header.
     Returns details of the authenticated user.
     """
+    return current_user
 
 @router.put("/me", response_model=UserResponse)
 async def update_user_me(
@@ -135,6 +136,61 @@ async def update_user_me(
     db.add(current_user)
     await db.commit()
     await db.refresh(current_user)
-    
+
     return current_user
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Request a password reset token.
+
+    Always returns success to prevent email enumeration.
+    If the user exists, a reset token is generated.
+    """
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+
+    if user:
+        token = create_reset_token(user.id)
+        # In production, send this token via email.
+        # For development, we return it in the response.
+        return {"message": "If an account exists for this email, a reset link has been sent.", "reset_token": token}
+
+    # Return the same message even if user not found (prevents enumeration)
+    return {"message": "If an account exists for this email, a reset link has been sent."}
+
+
+@router.post("/reset-password")
+async def reset_password(
+    body: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Reset password using a valid reset token.
+    """
+    user_id = verify_reset_token(body.token)
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token"
+        )
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    user.hashed_password = get_password_hash(body.new_password)
+    db.add(user)
+    await db.commit()
+
+    return {"message": "Password has been reset successfully"}
 

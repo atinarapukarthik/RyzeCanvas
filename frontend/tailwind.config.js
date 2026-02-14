@@ -14,6 +14,10 @@ module.exports = {
             },
         },
         extend: {
+            fontFamily: {
+                display: ["var(--font-display)", "system-ui", "sans-serif"],
+                body: ["var(--font-body)", "system-ui", "sans-serif"],
+            },
             colors: {
                 border: "hsl(var(--border))",
                 input: "hsl(var(--input))",
@@ -106,6 +110,39 @@ module.exports = {
                     "0%": { transform: "translateX(100%)" },
                     "100%": { transform: "translateX(0)" },
                 },
+                marquee: {
+                    "0%": { transform: "translateX(0%)" },
+                    "100%": { transform: "translateX(-50%)" },
+                },
+                "aurora-shift": {
+                    "0%": { transform: "translate(0%, 0%) rotate(0deg) scale(1)" },
+                    "33%": { transform: "translate(5%, -3%) rotate(2deg) scale(1.05)" },
+                    "66%": { transform: "translate(-3%, 5%) rotate(-1deg) scale(0.97)" },
+                    "100%": { transform: "translate(0%, 0%) rotate(0deg) scale(1)" },
+                },
+                "aurora-shift-2": {
+                    "0%": { transform: "translate(0%, 0%) rotate(0deg) scale(1)" },
+                    "33%": { transform: "translate(-4%, 4%) rotate(-2deg) scale(1.03)" },
+                    "66%": { transform: "translate(4%, -2%) rotate(1deg) scale(0.95)" },
+                    "100%": { transform: "translate(0%, 0%) rotate(0deg) scale(1)" },
+                },
+                "beam-slide": {
+                    "0%": { transform: "translateX(-100%) rotate(-45deg)" },
+                    "100%": { transform: "translateX(300%) rotate(-45deg)" },
+                },
+                "pulse-ring": {
+                    "0%": { transform: "scale(1)", opacity: "0.6" },
+                    "50%": { transform: "scale(1.15)", opacity: "0" },
+                    "100%": { transform: "scale(1)", opacity: "0" },
+                },
+                "text-reveal": {
+                    "0%": { opacity: "0", transform: "translateY(100%)" },
+                    "100%": { opacity: "1", transform: "translateY(0)" },
+                },
+                "border-beam": {
+                    "0%": { "offset-distance": "0%" },
+                    "100%": { "offset-distance": "100%" },
+                },
             },
             animation: {
                 "accordion-down": "accordion-down 0.2s ease-out",
@@ -117,6 +154,13 @@ module.exports = {
                 "float-delayed": "float-delayed 8s ease-in-out infinite",
                 shimmer: "shimmer 2s linear infinite",
                 "slide-in-right": "slide-in-right 0.3s ease-out",
+                marquee: "marquee var(--marquee-duration, 30s) linear infinite",
+                "aurora-1": "aurora-shift 15s ease-in-out infinite",
+                "aurora-2": "aurora-shift-2 20s ease-in-out infinite",
+                "beam-slide": "beam-slide 8s ease-in-out infinite",
+                "pulse-ring": "pulse-ring 2s ease-out infinite",
+                "text-reveal": "text-reveal 0.6s ease-out forwards",
+                "border-beam": "border-beam 6s linear infinite",
             },
         },
     },

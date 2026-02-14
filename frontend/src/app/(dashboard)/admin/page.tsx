@@ -66,32 +66,7 @@ export default function AdminPage() {
     };
 
     return (
-        <div className="min-h-screen bg-background font-sans">
-            {/* Header */}
-            <header className="border-b border-white/5 bg-sidebar/50 backdrop-blur-md sticky top-0 z-10">
-                <div className="container flex h-14 items-center justify-between px-4">
-                    <div className="flex items-center gap-4">
-                        <Link href="/" className="flex items-center gap-2 group">
-                            <div className="bg-primary p-1 rounded-md shadow-lg shadow-primary/20 group-hover:scale-105 transition-transform">
-                                <Zap className="h-4 w-4 text-primary-foreground" />
-                            </div>
-                            <span className="font-bold tracking-tight">RyzeCanvas</span>
-                        </Link>
-                        <span className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-full bg-primary/10 text-primary font-bold border border-primary/20">Admin Control</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <Button variant="ghost" size="sm" asChild className="text-xs h-8">
-                            <Link href="/studio"><ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Back to Studio</Link>
-                        </Button>
-                        <div className="h-4 w-px bg-border mx-1" />
-                        <Button variant="outline" size="sm" className="text-xs h-8 border-white/10" onClick={() => { logout(); router.push('/'); }}>
-                            <LogOut className="mr-1.5 h-3.5 w-3.5" /> Sign Out
-                        </Button>
-                    </div>
-                </div>
-            </header>
-
-            <main className="container py-10 px-4 space-y-8 max-w-6xl mx-auto">
+        <div className="container py-10 px-4 space-y-8 max-w-6xl mx-auto">
                 <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
                     <div>
                         <h1 className="text-3xl font-extrabold tracking-tight mb-1">System Dashboard</h1>
@@ -179,7 +154,6 @@ export default function AdminPage() {
                         </div>
                     )}
                 </div>
-            </main>
         </div>
     );
 }

@@ -16,27 +16,27 @@ async def init_db():
     Creates an admin user if no users exist.
     """
     if engine is None:
-        print("⚠️  Skipping database initialization: DATABASE_URL not configured.")
+        print("[WARN] Skipping database initialization: DATABASE_URL not configured.")
         return
-        
+
     # Create all tables
     async with engine.connect() as conn:
         curr_user = await conn.execute(text("SELECT current_user"))
         search_path = await conn.execute(text("SHOW search_path"))
-        print(f"🔍 DB Debug: User={curr_user.fetchone()[0]}, Path={search_path.fetchone()[0]}")
-    
-    print(f"📦 Creating tables for: {list(Base.metadata.tables.keys())}")
+        print(f"[DB] Debug: User={curr_user.fetchone()[0]}, Path={search_path.fetchone()[0]}")
+
+    print(f"[DB] Creating tables for: {list(Base.metadata.tables.keys())}")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    print("✅ Tables created (or already existed).")
-    
+    print("[OK] Tables created (or already existed).")
+
     # Check if we need to create default admin
     async with AsyncSessionLocal() as session:
         try:
             # Use raw SQL to avoid metadata issues if tables were just created
             result = await session.execute(text("SELECT email FROM users LIMIT 1"))
             existing_user = result.fetchone()
-            
+
             if not existing_user:
                 # Create default admin user
                 admin_user = User(
@@ -46,19 +46,19 @@ async def init_db():
                     role="admin",
                     is_active=True
                 )
-                
+
                 session.add(admin_user)
                 await session.commit()
-                
-                print("✅ Database initialized successfully!")
-                print("🔑 Default admin user created:")
+
+                print("[OK] Database initialized successfully!")
+                print("[AUTH] Default admin user created:")
                 print("   Email: admin@ryze.ai")
                 print("   Password: admin123")
-                print("   ⚠️  Please change the password after first login!")
+                print("   [WARN] Please change the password after first login!")
             else:
-                print("✅ Database already initialized.")
+                print("[OK] Database already initialized.")
         except Exception as e:
-            print(f"❌ Database initialization failed error: {e}")
+            print(f"[ERROR] Database initialization failed error: {e}")
             traceback.print_exc()
             raise e
 
