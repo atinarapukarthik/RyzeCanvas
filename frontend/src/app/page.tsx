@@ -5,6 +5,8 @@ import { Hero } from "@/components/landing/Hero";
 import { SocialProof } from "@/components/landing/SocialProof";
 import { Features } from "@/components/landing/Features";
 import { CTASection } from "@/components/landing/CTASection";
+import { PricingSection } from "@/components/landing/PricingSection";
+import { TestimonialsSection } from "@/components/landing/TestimonialsSection";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { Sparkles, MessageSquare, Eye, Rocket, Github, Twitter, Linkedin } from "lucide-react";
@@ -236,6 +238,8 @@ export default function LandingPage() {
                 <SocialProof />
                 <Features />
                 <HowItWorks />
+                <PricingSection />
+                <TestimonialsSection />
                 <CTASection />
             </main>
             <Footer />

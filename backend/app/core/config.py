@@ -9,25 +9,25 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
-    
+
     # Application Metadata
     PROJECT_NAME: str = "RyzeCanvas"
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
-    
+
     # Security Configuration
     # Security Configuration
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 120
-    
+
     # Database Configuration
     DATABASE_URL: Optional[str] = None
-    
+
     # Frontend Configuration
     FRONTEND_URL: str = "http://localhost:3000"
     BACKEND_CORS_ORIGINS: List[str] = []
-    
+
     # AI Configuration
     AI_MODEL_PROVIDER: str = "gemini"
     OPENAI_API_KEY: Optional[str] = None
@@ -35,11 +35,12 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: Optional[str] = None
     OPENROUTER_API_KEY: Optional[str] = None
     OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "codellama:7b"
 
     # Supabase Configuration
     SUPABASE_URL: Optional[str] = None
     SUPABASE_ANON_KEY: Optional[str] = None
-    
+
     @validator("BACKEND_CORS_ORIGINS", pre=True)
     def assemble_cors_origins(cls, v, values):
         """
@@ -47,7 +48,7 @@ class Settings(BaseSettings):
         Always includes FRONTEND_URL and localhost defaults.
         """
         origins = []
-        
+
         # Add explicitly defined origins
         if isinstance(v, str):
             import json
@@ -57,22 +58,22 @@ class Settings(BaseSettings):
                 origins.append(v)
         elif isinstance(v, list):
             origins.extend(v)
-            
+
         # Add FRONTEND_URL from env if available
         if "FRONTEND_URL" in values:
             origins.append(values["FRONTEND_URL"])
-            
+
         # Add common defaults if empty
         if not origins:
             origins = [
-                "http://localhost:5173", 
+                "http://localhost:5173",
                 "http://localhost:3000",
                 "http://127.0.0.1:5173",
                 "http://127.0.0.1:3000"
             ]
-            
+
         return list(set(origins))  # Remove duplicates
-    
+
     model_config = {
         "env_file": ".env",
         "case_sensitive": True,
