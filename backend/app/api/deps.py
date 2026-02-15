@@ -30,7 +30,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         # We allow it to be optional for endpoints that support Supabase API.
         yield None
         return
-        
+
     async with AsyncSessionLocal() as session:
         try:
             yield session
@@ -115,10 +115,27 @@ async def get_current_user(
     else:
         # Fallback to Supabase API
         from app.core.supabase import supabase
-        response = supabase.table("users").select("*").eq("id", token_data.sub).execute()
+        response = supabase.table("users").select(
+            "*").eq("id", token_data.sub).execute()
         if response.data:
-            user_data = response.data[0]
-            user = User(**user_data)
+            row = response.data[0]
+            user = User(
+                id=row.get("id"),
+                email=row.get("email"),
+                hashed_password=row.get("hashed_password", ""),
+                full_name=row.get("full_name", ""),
+                role=row.get("role", "user"),
+                is_active=row.get("is_active", True),
+                github_token=row.get("github_token"),
+                github_username=row.get("github_username"),
+            )
+            if row.get("created_at"):
+                try:
+                    from datetime import datetime
+                    user.created_at = datetime.fromisoformat(
+                        str(row["created_at"]).replace("Z", "+00:00"))
+                except (ValueError, TypeError):
+                    pass
         else:
             user = None
 

@@ -4,7 +4,6 @@ import * as React from "react";
 import { useState } from "react";
 import { Lock, Mail, User } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { supabase } from "@/lib/supabase";
 
 interface SignUpProps {
 	onSubmit?: (name: string, email: string, password: string) => void | Promise<void>;
@@ -67,14 +66,12 @@ export function SignUp({ onSubmit, onSignInClick, className }: SignUpProps) {
 		setError("");
 		setIsGoogleLoading(true);
 		try {
-			const { error } = await supabase.auth.signInWithOAuth({
-				provider: "google",
-				options: {
-					redirectTo: `${window.location.origin}/callback`,
-				},
-			});
-			if (error) {
-				setError(error.message);
+			const res = await fetch("/api/auth/google/url");
+			const data = await res.json();
+			if (data.auth_url) {
+				window.location.href = data.auth_url;
+			} else {
+				setError(data.detail || "Failed to get Google auth URL");
 				setIsGoogleLoading(false);
 			}
 		} catch {

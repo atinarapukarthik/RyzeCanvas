@@ -59,7 +59,7 @@ const plans = [
             "SLA guarantee",
         ],
         cta: "Contact Sales",
-        href: "/contact",
+        href: "mailto:support@ryzecanvas.com",
         popular: false,
     },
 ];
@@ -68,8 +68,8 @@ function PricingCard({ plan, index }: { plan: typeof plans[0]; index: number }) 
     return (
         <motion.div
             className={`relative flex flex-col rounded-2xl border p-8 transition-all duration-500 ${plan.popular
-                    ? "border-primary/50 bg-gradient-to-b from-primary/5 to-transparent shadow-glow-sm scale-105"
-                    : "border-border bg-card/40 hover:border-border/80 hover:bg-card/60"
+                ? "border-primary/50 bg-gradient-to-b from-primary/5 to-transparent shadow-glow-sm scale-105"
+                : "border-border bg-card/40 hover:border-border/80 hover:bg-card/60"
                 }`}
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -131,8 +131,8 @@ function PricingCard({ plan, index }: { plan: typeof plans[0]; index: number }) 
             <Link
                 href={plan.href}
                 className={`inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${plan.popular
-                        ? "bg-gradient-to-r from-primary to-accent text-primary-foreground hover:brightness-110 hover:shadow-glow-sm"
-                        : "border border-border bg-background hover:bg-accent/10 hover:border-primary/50 text-foreground"
+                    ? "bg-gradient-to-r from-primary to-accent text-primary-foreground hover:brightness-110 hover:shadow-glow-sm"
+                    : "border border-border bg-background hover:bg-accent/10 hover:border-primary/50 text-foreground"
                     }`}
             >
                 {plan.cta}
@@ -197,14 +197,14 @@ export function PricingSection() {
                     <p className="text-sm text-muted-foreground">
                         Questions?{" "}
                         <Link
-                            href="/faq"
+                            href="#pricing"
                             className="text-primary hover:underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:rounded"
                         >
                             View our FAQ
                         </Link>{" "}
                         or{" "}
                         <Link
-                            href="/contact"
+                            href="mailto:support@ryzecanvas.com"
                             className="text-primary hover:underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:rounded"
                         >
                             contact our team

@@ -1,10 +1,19 @@
 """
 Authentication endpoints for user registration and login.
 JWT-based authentication with HTTP-only cookie support + refresh tokens.
+Includes Google OAuth via backend-driven flow (Synthetic Vivarium pattern).
 """
-from datetime import timedelta
+import secrets
+from datetime import datetime, timedelta
+from urllib.parse import urlencode, quote
+import base64
+import json
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from jose import jwt as jose_jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -98,7 +107,8 @@ async def register(
     else:
         # Supabase API Fallback
         from app.core.supabase import supabase
-        sb_response = supabase.table("users").select("*").eq("email", user_in.email).execute()
+        sb_response = supabase.table("users").select(
+            "*").eq("email", user_in.email).execute()
         if sb_response.data:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -112,14 +122,14 @@ async def register(
             "full_name": user_in.full_name,
             "role": user_in.role,
         }
-        
+
         insert_resp = supabase.table("users").insert(user_data).execute()
         if not insert_resp.data:
             raise HTTPException(
                 status_code=500,
                 detail="Failed to register user in Supabase"
             )
-            
+
         return User(**insert_resp.data[0])
 
 
@@ -137,7 +147,7 @@ async def login(
     if db is not None:
         result = await db.execute(select(User).where(User.email == form_data.username))
         user = result.scalar_one_or_none()
-        
+
         if not user or not verify_password(form_data.password, user.hashed_password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -147,7 +157,8 @@ async def login(
     else:
         # Supabase API Fallback
         from app.core.supabase import supabase
-        sb_response = supabase.table("users").select("*").eq("email", form_data.username).execute()
+        sb_response = supabase.table("users").select(
+            "*").eq("email", form_data.username).execute()
         if not sb_response.data:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -328,3 +339,249 @@ async def reset_password(
     await db.commit()
 
     return {"message": "Password has been reset successfully"}
+
+
+# ---------------------------------------------------------------------------
+# Google OAuth (Backend-driven, Synthetic Vivarium pattern)
+# ---------------------------------------------------------------------------
+
+def _create_oauth_state() -> str:
+    """Create a signed JWT state token for CSRF protection."""
+    payload = {
+        "nonce": secrets.token_urlsafe(16),
+        "exp": datetime.utcnow() + timedelta(minutes=10),
+        "type": "oauth_state",
+    }
+    return jose_jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def _verify_oauth_state(state: str) -> bool:
+    """Verify and validate the signed state token."""
+    try:
+        payload = jose_jwt.decode(
+            state, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
+        return payload.get("type") == "oauth_state"
+    except Exception:
+        return False
+
+
+@router.get("/google/url")
+async def get_google_auth_url():
+    """
+    Get the Google OAuth authorization URL.
+    State is signed with SECRET_KEY for CSRF protection.
+    Frontend should redirect user to this URL.
+    """
+    if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_REDIRECT_URI:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google OAuth is not configured",
+        )
+
+    state = _create_oauth_state()
+
+    params = {
+        "client_id": settings.GOOGLE_CLIENT_ID,
+        "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": state,
+    }
+
+    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+    return {"auth_url": auth_url}
+
+
+@router.get("/google/callback")
+async def google_auth_callback(
+    code: str = None,
+    state: str = None,
+    error: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Handle Google OAuth callback.
+    1. Validates state (CSRF)
+    2. Exchanges code for Google tokens
+    3. Gets user info from Google
+    4. Creates or finds user in DB
+    5. Sets JWT cookies and redirects to frontend
+    """
+    frontend_url = settings.FRONTEND_URL.rstrip("/")
+
+    if error:
+        return RedirectResponse(
+            url=f"{frontend_url}/callback?error={error}",
+            status_code=302,
+        )
+
+    if not code or not state:
+        return RedirectResponse(
+            url=f"{frontend_url}/callback?error=missing_params",
+            status_code=302,
+        )
+
+    # Validate state token (CSRF protection)
+    if not _verify_oauth_state(state):
+        return RedirectResponse(
+            url=f"{frontend_url}/callback?error=invalid_state",
+            status_code=302,
+        )
+
+    try:
+        # Exchange authorization code for tokens
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": code,
+                    "client_id": settings.GOOGLE_CLIENT_ID,
+                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                    "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+                    "grant_type": "authorization_code",
+                },
+            )
+
+        if token_response.status_code != 200:
+            return RedirectResponse(
+                url=f"{frontend_url}/callback?error=token_exchange_failed",
+                status_code=302,
+            )
+
+        token_data = token_response.json()
+        google_access_token = token_data.get("access_token")
+
+        if not google_access_token:
+            return RedirectResponse(
+                url=f"{frontend_url}/callback?error=no_access_token",
+                status_code=302,
+            )
+
+        # Get user info from Google
+        async with httpx.AsyncClient() as client:
+            userinfo_response = await client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {google_access_token}"},
+            )
+
+        if userinfo_response.status_code != 200:
+            return RedirectResponse(
+                url=f"{frontend_url}/callback?error=userinfo_failed",
+                status_code=302,
+            )
+
+        google_user = userinfo_response.json()
+        google_email = google_user.get("email")
+        google_name = google_user.get("name", "")
+
+        if not google_email:
+            return RedirectResponse(
+                url=f"{frontend_url}/callback?error=no_email",
+                status_code=302,
+            )
+
+        # Find or create user in database (with Supabase fallback)
+        if db is not None:
+            result = await db.execute(select(User).where(User.email == google_email))
+            user = result.scalar_one_or_none()
+
+            if not user:
+                random_password = secrets.token_urlsafe(32)
+                user = User(
+                    email=google_email,
+                    hashed_password=get_password_hash(random_password),
+                    full_name=google_name or google_email.split("@")[0],
+                    role="user",
+                )
+                db.add(user)
+                await db.commit()
+                await db.refresh(user)
+        else:
+            # Supabase fallback when DATABASE_URL is not configured
+            from app.core.supabase import supabase as sb_client
+            if not sb_client:
+                return RedirectResponse(
+                    url=f"{frontend_url}/callback?error=no_database",
+                    status_code=302,
+                )
+            resp = sb_client.table("users").select("*").eq("email", google_email).execute()
+            if resp.data:
+                row = resp.data[0]
+            else:
+                random_password = secrets.token_urlsafe(32)
+                new_user = {
+                    "email": google_email,
+                    "hashed_password": get_password_hash(random_password),
+                    "full_name": google_name or google_email.split("@")[0],
+                    "role": "user",
+                    "is_active": True,
+                }
+                insert_resp = sb_client.table("users").insert(new_user).execute()
+                if not insert_resp.data:
+                    return RedirectResponse(
+                        url=f"{frontend_url}/callback?error=user_creation_failed",
+                        status_code=302,
+                    )
+                row = insert_resp.data[0]
+            # Build User from only known columns to avoid constructor errors
+            user = User(
+                id=row.get("id"),
+                email=row.get("email"),
+                hashed_password=row.get("hashed_password", ""),
+                full_name=row.get("full_name", ""),
+                role=row.get("role", "user"),
+                is_active=row.get("is_active", True),
+            )
+            if row.get("created_at"):
+                try:
+                    user.created_at = datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00"))
+                except (ValueError, TypeError):
+                    pass
+
+        if not user.is_active:
+            return RedirectResponse(
+                url=f"{frontend_url}/callback?error=inactive_user",
+                status_code=302,
+            )
+
+        # Create JWT tokens
+        token_payload = {"sub": str(user.id)}
+        access_token = create_access_token(data=token_payload)
+        refresh_token = create_refresh_token(data=token_payload)
+
+        # Encode user data for frontend auth store
+        user_data = {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "is_active": user.is_active,
+            "created_at": str(user.created_at) if user.created_at else None,
+        }
+        user_b64 = base64.b64encode(json.dumps(user_data, default=str).encode()).decode()
+
+        # Redirect to frontend callback with token and user data
+        redirect_url = (
+            f"{frontend_url}/callback?success=true"
+            f"&token={quote(access_token)}"
+            f"&user={quote(user_b64)}"
+        )
+        redirect_response = RedirectResponse(
+            url=redirect_url,
+            status_code=302,
+        )
+        _set_auth_cookies(redirect_response, access_token, refresh_token)
+
+        return redirect_response
+
+    except Exception as e:
+        import traceback
+        print(f"[GOOGLE_OAUTH_ERROR] {type(e).__name__}: {e}")
+        traceback.print_exc()
+        return RedirectResponse(
+            url=f"{frontend_url}/callback?error=server_error",
+            status_code=302,
+        )
