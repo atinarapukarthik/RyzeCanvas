@@ -98,8 +98,8 @@ async def register(
     else:
         # Supabase API Fallback
         from app.core.supabase import supabase
-        response = supabase.table("users").select("*").eq("email", user_in.email).execute()
-        if response.data:
+        sb_response = supabase.table("users").select("*").eq("email", user_in.email).execute()
+        if sb_response.data:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered",
@@ -147,14 +147,14 @@ async def login(
     else:
         # Supabase API Fallback
         from app.core.supabase import supabase
-        response = supabase.table("users").select("*").eq("email", form_data.username).execute()
-        if not response.data:
+        sb_response = supabase.table("users").select("*").eq("email", form_data.username).execute()
+        if not sb_response.data:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        user_data = response.data[0]
+        user_data = sb_response.data[0]
         if not verify_password(form_data.password, user_data["hashed_password"]):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

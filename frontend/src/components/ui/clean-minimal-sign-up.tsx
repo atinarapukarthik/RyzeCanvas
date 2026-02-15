@@ -69,7 +69,13 @@ export function SignUp({ onSubmit, onSignInClick, className }: SignUpProps) {
 					Join the elite club of AI-driven builders
 				</p>
 			</div>
-			<div className="w-full flex flex-col gap-3 mb-2">
+			<form
+				onSubmit={(e) => {
+					e.preventDefault();
+					handleSignUp();
+				}}
+				className="w-full flex flex-col gap-3 mb-2"
+			>
 				<div className="relative">
 					<span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
 						<User className="w-4 h-4" />
@@ -79,9 +85,9 @@ export function SignUp({ onSubmit, onSignInClick, className }: SignUpProps) {
 						type="text"
 						value={name}
 						disabled={isLoading}
+						autoComplete="name"
 						className="w-full pl-10 pr-3 py-2 rounded-xl border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 bg-muted/50 text-foreground text-sm"
 						onChange={(e) => setName(e.target.value)}
-						onKeyPress={handleKeyPress}
 					/>
 				</div>
 				<div className="relative">
@@ -93,9 +99,9 @@ export function SignUp({ onSubmit, onSignInClick, className }: SignUpProps) {
 						type="email"
 						value={email}
 						disabled={isLoading}
+						autoComplete="email"
 						className="w-full pl-10 pr-3 py-2 rounded-xl border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 bg-muted/50 text-foreground text-sm"
 						onChange={(e) => setEmail(e.target.value)}
-						onKeyPress={handleKeyPress}
 					/>
 				</div>
 				<div className="relative">
@@ -107,9 +113,9 @@ export function SignUp({ onSubmit, onSignInClick, className }: SignUpProps) {
 						type="password"
 						value={password}
 						disabled={isLoading}
+						autoComplete="new-password"
 						className="w-full pl-10 pr-10 py-2 rounded-xl border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 bg-muted/50 text-foreground text-sm"
 						onChange={(e) => setPassword(e.target.value)}
-						onKeyPress={handleKeyPress}
 					/>
 				</div>
 				<div className="relative">
@@ -121,9 +127,9 @@ export function SignUp({ onSubmit, onSignInClick, className }: SignUpProps) {
 						type="password"
 						value={confirmPassword}
 						disabled={isLoading}
+						autoComplete="new-password"
 						className="w-full pl-10 pr-10 py-2 rounded-xl border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 bg-muted/50 text-foreground text-sm"
 						onChange={(e) => setConfirmPassword(e.target.value)}
-						onKeyPress={handleKeyPress}
 					/>
 				</div>
 				<div className="w-full">
@@ -131,14 +137,14 @@ export function SignUp({ onSubmit, onSignInClick, className }: SignUpProps) {
 						<div className="text-sm text-destructive text-left">{error}</div>
 					)}
 				</div>
-			</div>
-			<button
-				onClick={handleSignUp}
-				disabled={isLoading}
-				className="w-full bg-gradient-to-b from-primary to-primary/90 text-primary-foreground font-medium py-2 rounded-xl shadow hover:brightness-105 cursor-pointer transition mb4 mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
-			>
-				{isLoading ? "Creating account..." : "Create Account"}
-			</button>
+				<button
+					type="submit"
+					disabled={isLoading}
+					className="w-full bg-gradient-to-b from-primary to-primary/90 text-primary-foreground font-medium py-2 rounded-xl shadow hover:brightness-105 cursor-pointer transition mb-4 mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
+				>
+					{isLoading ? "Creating account..." : "Create Account"}
+				</button>
+			</form>
 			<div className="flex items-center w-full my-2">
 				<div className="flex-grow border-t border-dashed border-border"></div>
 				<span className="mx-2 text-xs text-muted-foreground">
