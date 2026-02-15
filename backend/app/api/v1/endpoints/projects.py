@@ -45,21 +45,37 @@ async def create_project(
         )
 
     # Create new project
-    db_project = Project(
-        title=project_in.title,
-        description=project_in.description,
-        code_json=code,
-        user_id=current_user.id,
-        is_public=project_in.is_public,
-        provider=project_in.provider,
-        model=project_in.model
-    )
-    
-    db.add(db_project)
-    await db.commit()
-    await db.refresh(db_project)
-    
-    return db_project
+    if db is not None:
+        db_project = Project(
+            title=project_in.title,
+            description=project_in.description,
+            code_json=code,
+            user_id=current_user.id,
+            is_public=project_in.is_public,
+            provider=project_in.provider,
+            model=project_in.model
+        )
+        
+        db.add(db_project)
+        await db.commit()
+        await db.refresh(db_project)
+        return db_project
+    else:
+        # Supabase API Fallback
+        from app.core.supabase import supabase
+        project_data = {
+            "title": project_in.title,
+            "description": project_in.description,
+            "code_json": code,
+            "user_id": current_user.id,
+            "is_public": project_in.is_public,
+            "provider": project_in.provider,
+            "model": project_in.model
+        }
+        response = supabase.table("projects").insert(project_data).execute()
+        if not response.data:
+            raise HTTPException(status_code=500, detail="Failed to create project in Supabase")
+        return Project(**response.data[0])
 
 
 @router.get("/", response_model=List[ProjectResponse])
@@ -77,16 +93,26 @@ async def list_projects(
     
     Returns only projects owned by the authenticated user.
     """
-    result = await db.execute(
-        select(Project)
-        .where(Project.user_id == current_user.id)
-        .offset(skip)
-        .limit(limit)
-        .order_by(Project.created_at.desc())
-    )
-    projects = result.scalars().all()
-    
-    return projects
+    if db is not None:
+        result = await db.execute(
+            select(Project)
+            .where(Project.user_id == current_user.id)
+            .offset(skip)
+            .limit(limit)
+            .order_by(Project.created_at.desc())
+        )
+        projects = result.scalars().all()
+        return projects
+    else:
+        # Supabase API Fallback
+        from app.core.supabase import supabase
+        response = supabase.table("projects") \
+            .select("*") \
+            .eq("user_id", current_user.id) \
+            .order("created_at", ascending=False) \
+            .range(skip, skip + limit - 1) \
+            .execute()
+        return [Project(**p) for p in response.data]
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)

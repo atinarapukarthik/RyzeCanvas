@@ -35,15 +35,24 @@ async def list_all_users(
     
     **Requires:** Admin role
     """
-    result = await db.execute(
-        select(User)
-        .offset(skip)
-        .limit(limit)
-        .order_by(User.created_at.desc())
-    )
-    users = result.scalars().all()
-    
-    return users
+    if db is not None:
+        result = await db.execute(
+            select(User)
+            .offset(skip)
+            .limit(limit)
+            .order_by(User.created_at.desc())
+        )
+        users = result.scalars().all()
+        return users
+    else:
+        # Supabase API Fallback
+        from app.core.supabase import supabase
+        response = supabase.table("users") \
+            .select("*") \
+            .order("created_at", ascending=False) \
+            .range(skip, skip + limit - 1) \
+            .execute()
+        return [User(**u) for u in response.data]
 
 
 @router.post("/users", response_model=UserResponse)

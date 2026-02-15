@@ -8,21 +8,28 @@ from sqlalchemy.orm import declarative_base
 from app.core.config import settings
 
 
-# Create async engine
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=True,  # Set to False in production
-    future=True
-)
+# Create async engine and session factory if DATABASE_URL is configured
+engine = None
+AsyncSessionLocal = None
 
-# Session factory
-AsyncSessionLocal = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autocommit=False,
-    autoflush=False
-)
+if settings.DATABASE_URL:
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=True,  # Set to False in production
+        future=True
+    )
+
+    # Session factory
+    AsyncSessionLocal = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False
+    )
+else:
+    print("⚠️ WARNING: DATABASE_URL is not configured. Direct Postgres connection is disabled.")
+    print("Application will attempt to use Supabase API if configured.")
 
 # Base class for declarative models
 Base = declarative_base()

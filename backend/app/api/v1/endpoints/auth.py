@@ -73,28 +73,54 @@ async def register(
     - **password**: User password (will be hashed)
     - **full_name**: User's full name
     """
-    result = await db.execute(select(User).where(User.email == user_in.email))
-    existing_user = result.scalar_one_or_none()
+    if db is not None:
+        result = await db.execute(select(User).where(User.email == user_in.email))
+        existing_user = result.scalar_one_or_none()
 
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered",
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered",
+            )
+
+        hashed_password = get_password_hash(user_in.password)
+        db_user = User(
+            email=user_in.email,
+            hashed_password=hashed_password,
+            full_name=user_in.full_name,
+            role=user_in.role,
         )
 
-    hashed_password = get_password_hash(user_in.password)
-    db_user = User(
-        email=user_in.email,
-        hashed_password=hashed_password,
-        full_name=user_in.full_name,
-        role=user_in.role,
-    )
+        db.add(db_user)
+        await db.commit()
+        await db.refresh(db_user)
+        return db_user
+    else:
+        # Supabase API Fallback
+        from app.core.supabase import supabase
+        response = supabase.table("users").select("*").eq("email", user_in.email).execute()
+        if response.data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered",
+            )
 
-    db.add(db_user)
-    await db.commit()
-    await db.refresh(db_user)
-
-    return db_user
+        hashed_password = get_password_hash(user_in.password)
+        user_data = {
+            "email": user_in.email,
+            "hashed_password": hashed_password,
+            "full_name": user_in.full_name,
+            "role": user_in.role,
+        }
+        
+        insert_resp = supabase.table("users").insert(user_data).execute()
+        if not insert_resp.data:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to register user in Supabase"
+            )
+            
+        return User(**insert_resp.data[0])
 
 
 @router.post("/login")
@@ -108,15 +134,35 @@ async def login(
     Sets HTTP-only cookies for access_token and refresh_token.
     Also returns tokens in JSON body for backwards compatibility.
     """
-    result = await db.execute(select(User).where(User.email == form_data.username))
-    user = result.scalar_one_or_none()
-
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    if db is not None:
+        result = await db.execute(select(User).where(User.email == form_data.username))
+        user = result.scalar_one_or_none()
+        
+        if not user or not verify_password(form_data.password, user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    else:
+        # Supabase API Fallback
+        from app.core.supabase import supabase
+        response = supabase.table("users").select("*").eq("email", form_data.username).execute()
+        if not response.data:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        user_data = response.data[0]
+        if not verify_password(form_data.password, user_data["hashed_password"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # Create a User object (shim)
+        user = User(**user_data)
 
     if not user.is_active:
         raise HTTPException(

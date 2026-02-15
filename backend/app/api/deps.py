@@ -25,11 +25,28 @@ oauth2_scheme = OAuth2PasswordBearer(
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency to get database session."""
+    if not AsyncSessionLocal:
+        # If SQLAlchemy is not configured, this dependency will fail.
+        # We allow it to be optional for endpoints that support Supabase API.
+        yield None
+        return
+        
     async with AsyncSessionLocal() as session:
         try:
             yield session
         finally:
             await session.close()
+
+
+def get_supabase():
+    """Dependency to get Supabase client."""
+    from app.core.supabase import supabase
+    if not supabase:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase is not configured. Please add SUPABASE_URL and SUPABASE_ANON_KEY."
+        )
+    return supabase
 
 
 def _extract_token(request: Request, bearer_token: Optional[str] = None) -> str:
@@ -92,8 +109,18 @@ async def get_current_user(
         raise credentials_exception
 
     # Fetch user from database
-    result = await db.execute(select(User).where(User.id == token_data.sub))
-    user = result.scalar_one_or_none()
+    if db is not None:
+        result = await db.execute(select(User).where(User.id == token_data.sub))
+        user = result.scalar_one_or_none()
+    else:
+        # Fallback to Supabase API
+        from app.core.supabase import supabase
+        response = supabase.table("users").select("*").eq("id", token_data.sub).execute()
+        if response.data:
+            user_data = response.data[0]
+            user = User(**user_data)
+        else:
+            user = None
 
     if user is None:
         raise credentials_exception

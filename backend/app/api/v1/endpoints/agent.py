@@ -194,44 +194,78 @@ async def save_plan(
     ```
     """
     try:
-        # Fetch project with ownership check
-        result = await db.execute(
-            select(Project).where(
-                Project.id == request.project_id,
-                Project.user_id == current_user.id
+        if db is not None:
+            # Fetch project with ownership check
+            result = await db.execute(
+                select(Project).where(
+                    Project.id == request.project_id,
+                    Project.user_id == current_user.id
+                )
             )
-        )
-        project = result.scalar_one_or_none()
+            project = result.scalar_one_or_none()
 
-        if not project:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Project not found or you don't have permission to update it"
+            if not project:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Project not found or you don't have permission to update it"
+                )
+
+            # Convert dict to JSON string for storage
+            code_json_str = json.dumps(request.code_json)
+
+            # Update project
+            project.code_json = code_json_str
+            project.updated_at = datetime.utcnow()
+
+            await db.commit()
+            await db.refresh(project)
+
+            return SavePlanResponse(
+                success=True,
+                project_id=project.id,
+                message=f"UI plan saved to project '{project.title}' successfully",
+                updated_at=project.updated_at
             )
-
-        # Convert dict to JSON string for storage
-        code_json_str = json.dumps(request.code_json)
-
-        # Update project
-        project.code_json = code_json_str
-        project.updated_at = datetime.utcnow()
-
-        await db.commit()
-        await db.refresh(project)
-
-        return SavePlanResponse(
-            success=True,
-            project_id=project.id,
-            message=f"UI plan saved to project '{project.title}' successfully",
-            updated_at=project.updated_at
-        )
+        else:
+            # Supabase API Fallback
+            from app.core.supabase import supabase
+            # Check ownership
+            response = supabase.table("projects") \
+                .select("*") \
+                .eq("id", request.project_id) \
+                .eq("user_id", current_user.id) \
+                .execute()
+            
+            if not response.data:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Project not found or you don't have permission to update it"
+                )
+            
+            # Update project
+            code_json_str = json.dumps(request.code_json)
+            update_resp = supabase.table("projects") \
+                .update({"code_json": code_json_str, "updated_at": datetime.utcnow().isoformat()}) \
+                .eq("id", request.project_id) \
+                .execute()
+                
+            if not update_resp.data:
+                raise HTTPException(status_code=500, detail="Failed to update project in Supabase")
+                
+            updated_project = update_resp.data[0]
+            return SavePlanResponse(
+                success=True,
+                project_id=updated_project["id"],
+                message=f"UI plan saved successfully",
+                updated_at=updated_project["updated_at"]
+            )
 
     except HTTPException:
         # Re-raise HTTP exceptions
         raise
-
     except Exception as e:
-        await db.rollback()
+        if db:
+            await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save plan: {str(e)}"
