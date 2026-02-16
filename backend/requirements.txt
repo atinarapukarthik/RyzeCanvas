@@ -47,3 +47,6 @@ pytest-cov>=4.1.0
 
 # Supabase
 supabase>=2.3.0
+
+# Speech Recognition
+faster-whisper>=0.10.0

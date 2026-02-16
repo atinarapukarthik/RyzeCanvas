@@ -332,7 +332,7 @@ export async function searchWeb(query: string): Promise<{ success: boolean; quer
 // ---- Streaming Chat (SSE) ----
 
 export interface ChatStreamEvent {
-  event: "step" | "token" | "plan" | "code" | "error" | "done" | "questions" | "plan_ready" | "install" | "file_update" | "todo" | "command" | "log_analysis" | "explanation";
+  event: "step" | "token" | "plan" | "code" | "error" | "done" | "questions" | "plan_ready" | "install" | "file_update" | "todo" | "command" | "log_analysis" | "explanation" | "web_search";
   data: any;
 }
 
@@ -346,6 +346,7 @@ export interface ChatStreamOptions {
   planAnswers?: { question: string; answer: string }[];
   planData?: Record<string, any>;
   existingCode?: string;
+  themeContext?: string;
   onStep?: (step: string) => void;
   onToken?: (token: string) => void;
   onPlan?: (plan: string) => void;
@@ -360,6 +361,7 @@ export interface ChatStreamOptions {
   onCommand?: (result: any) => void;
   onLogAnalysis?: (analysis: any) => void;
   onExplanation?: (explanation: string) => void;
+  onWebSearch?: (results: any) => void;
   signal?: AbortSignal;
 }
 
@@ -371,10 +373,10 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
   const {
     prompt, mode, provider, model,
     conversationHistory = [], webSearchContext,
-    planAnswers, planData, existingCode,
+    planAnswers, planData, existingCode, themeContext,
     onStep, onToken, onPlan, onCode, onError, onDone,
     onQuestions, onPlanReady, onInstall, onFileUpdate, onTodo,
-    onCommand, onLogAnalysis, onExplanation,
+    onCommand, onLogAnalysis, onExplanation, onWebSearch,
     signal,
   } = options;
 
@@ -391,6 +393,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
     ...(planAnswers ? { plan_answers: planAnswers } : {}),
     ...(planData ? { plan_data: planData } : {}),
     ...(existingCode ? { existing_code: existingCode } : {}),
+    ...(themeContext ? { theme_context: themeContext } : {}),
   };
 
   const res = await fetch(`${API_BASE_URL}/chat/stream`, {
@@ -470,6 +473,9 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
             break;
           case "explanation":
             onExplanation?.(payload.data);
+            break;
+          case "web_search":
+            onWebSearch?.(payload.data);
             break;
         }
       } catch {

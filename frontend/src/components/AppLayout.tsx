@@ -1,8 +1,10 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { useState, useEffect } from "react";
 import { TopNavBar } from "@/components/TopNavBar";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { useAuthStore } from "@/stores/authStore";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -12,6 +14,41 @@ interface AppLayoutProps {
 export function AppLayout({ children, hideTopNav = false }: AppLayoutProps) {
   const pathname = usePathname();
   const isDashboard = pathname === "/dashboard";
+  const { isAuthenticated, user, logout, setUser } = useAuthStore();
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  useEffect(() => {
+    // Verify session with backend on mount
+    const verifySession = async () => {
+      if (isAuthenticated && !isVerifying) {
+        setIsVerifying(true);
+        try {
+          // We import the raw fetch directly to avoid circular dependency loops if api.ts imports store
+          const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+          const token = localStorage.getItem("token");
+          const headers: HeadersInit = { "Content-Type": "application/json" };
+          if (token) headers["Authorization"] = `Bearer ${token}`;
+
+          const res = await fetch(`${API_BASE_URL}/auth/me`, {
+            headers,
+            credentials: "include"
+          });
+
+          if (!res.ok) {
+            console.warn("[AppLayout] Session invalid, logging out");
+            logout();
+          }
+        } catch (e) {
+          console.error("[AppLayout] Session verification error:", e);
+          // Optional: don't logout on network error, just let it be
+        } finally {
+          setIsVerifying(false);
+        }
+      }
+    };
+
+    verifySession();
+  }, [isAuthenticated, logout]);
 
   return (
     <ProtectedRoute>

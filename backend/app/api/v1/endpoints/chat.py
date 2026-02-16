@@ -50,6 +50,10 @@ class ChatRequestBody(BaseModel):
         default=None,
         description="Existing generated code context for iterative modifications"
     )
+    theme_context: Optional[str] = Field(
+        default=None,
+        description="User's selected design theme for consistent styling in generated code"
+    )
 
     class Config:
         json_schema_extra = {
@@ -107,6 +111,7 @@ async def chat_stream(
         plan_answers=body.plan_answers,
         plan_data=body.plan_data,
         existing_code=body.existing_code,
+        theme_context=body.theme_context,
     )
 
     return StreamingResponse(
@@ -141,6 +146,7 @@ async def chat_message(
             for m in body.conversation_history
         ],
         web_search_context=body.web_search_context,
+        theme_context=body.theme_context,
     )
 
     import json

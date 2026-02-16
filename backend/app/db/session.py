@@ -28,7 +28,7 @@ if settings.DATABASE_URL:
         autoflush=False
     )
 else:
-    print("⚠️ WARNING: DATABASE_URL is not configured. Direct Postgres connection is disabled.")
+    print("[WARN] DATABASE_URL is not configured. Direct Postgres connection is disabled.")
     print("Application will attempt to use Supabase API if configured.")
 
 # Base class for declarative models

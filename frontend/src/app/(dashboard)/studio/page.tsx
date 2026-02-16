@@ -246,7 +246,19 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         : '// All icon names conflict with user code — icons available via lucideReact proxy';
 
     const reactGlobals = new Set(['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'createContext', 'useReducer', 'useId', 'Fragment', 'forwardRef', 'memo', 'Suspense']);
-    const stubsToGenerate = Array.from(importedNames).filter(n => !reactGlobals.has(n) && !allIconNames.includes(n) && !declaredNames.has(n));
+
+    // Libraries we provide via CDN and shouldn't stub out
+    const cdnProvided = new Set([
+        'clsx',
+        'useForm', 'useController', 'useFieldArray', 'useWatch', 'FormProvider', 'useFormContext'
+    ]);
+
+    const stubsToGenerate = Array.from(importedNames).filter(n =>
+        !reactGlobals.has(n) &&
+        !allIconNames.includes(n) &&
+        !declaredNames.has(n) &&
+        !cdnProvided.has(n)
+    );
     const importStubs = stubsToGenerate.length > 0
         ? stubsToGenerate.map(n => `const ${n} = React.forwardRef((props, ref) => React.createElement('div', { ...props, ref }, props.children));`).join('\n')
         : '';
@@ -260,6 +272,8 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/clsx/dist/clsx.min.js"></script>
+    <script src="https://unpkg.com/react-hook-form@7/dist/index.umd.js"></script>
     <style>
         body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         #root { min-height: 100vh; }
@@ -269,12 +283,70 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
             theme: { extend: {} }
         }
     </script>
+    <script>
+        // Intercept navigation to prevent recursive app loading
+        window.addEventListener('click', function(e) {
+            const link = e.target.closest('a');
+            if (link) {
+                const href = link.getAttribute('href');
+                // Ignore hash links, empty links, or javascript links
+                if (!href || href.startsWith('#') || href.startsWith('javascript:')) {
+                    return;
+                }
+
+                if (link.href) {
+                    try {
+                        const url = new URL(link.href);
+                        // If it's a local link (same origin), intercept it
+                        if (url.origin === window.location.origin) {
+                            e.preventDefault();
+                            console.log('[Preview] Intercepted navigation to:', url.pathname);
+                            window.parent.postMessage({
+                                type: 'preview-navigation',
+                                path: url.pathname
+                            }, '*');
+                        }
+                    } catch (err) {
+                        console.error('Navigation intercept error:', err);
+                    }
+                }
+            }
+        }, true);
+
+        // Error detection for AI-generated code - MUST be first to catch early errors
+        window.addEventListener('error', function(event) {
+            window.parent.postMessage({
+                type: 'preview-error',
+                error: {
+                    message: event.message,
+                    source: event.filename,
+                    line: event.lineno,
+                    column: event.colno,
+                    stack: event.error?.stack
+                }
+            }, '*');
+        });
+
+        window.addEventListener('unhandledrejection', function(event) {
+            window.parent.postMessage({
+                type: 'preview-error',
+                error: {
+                    message: event.reason?.message || String(event.reason),
+                    stack: event.reason?.stack
+                }
+            }, '*');
+        });
+    </script>
 </head>
 <body>
     <div id="root"></div>
     <script type="text/babel" data-type="module" data-presets="react,typescript">
         const { useState, useEffect, useRef, useMemo, useCallback, useContext, createContext,
                 useReducer, useId, Fragment, forwardRef, memo, Suspense } = React;
+
+        // Map CDN globals to local scope
+        const clsx = window.clsx;
+        const { useForm, useController, useFieldArray, useWatch, FormProvider, useFormContext } = window.ReactHookForm || {};
 
         // Stub for lucide-react icons — render simple SVG placeholders
         const iconHandler = {
@@ -341,31 +413,7 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(React.createElement(AppComponent));
     </script>
-    <script>
-        // Error detection for AI-generated code
-        window.addEventListener('error', function(event) {
-            window.parent.postMessage({
-                type: 'preview-error',
-                error: {
-                    message: event.message,
-                    source: event.filename,
-                    line: event.lineno,
-                    column: event.colno,
-                    stack: event.error?.stack
-                }
-            }, '*');
-        });
 
-        window.addEventListener('unhandledrejection', function(event) {
-            window.parent.postMessage({
-                type: 'preview-error',
-                error: {
-                    message: event.reason?.message || String(event.reason),
-                    stack: event.reason?.stack
-                }
-            }, '*');
-        });
-    </script>
 </body>
 </html>`;
 }
@@ -521,7 +569,7 @@ function FileTreeView({ files, activeFile, onSelect, depth = 0 }: {
 }
 
 function StudioContent() {
-    const { githubConnected, setGithubConnected, selectedModel, githubModal, setGithubModal } = useUIStore();
+    const { githubConnected, setGithubConnected, selectedModel, githubModal, setGithubModal, designTheme } = useUIStore();
     const router = useRouter();
     const searchParams = useSearchParams();
 
@@ -944,17 +992,43 @@ function StudioContent() {
     }, []);
 
     // Listen for errors from preview iframe — set error state but don't auto-open modal
+    // Listen for preview messages (errors, navigation)
     useEffect(() => {
         const handleMessage = (event: MessageEvent) => {
             if (event.data?.type === 'preview-error') {
                 const error = event.data.error;
                 setPreviewError(error);
-                // Don't auto-open modal — show subtle error badge instead
+            }
+            if (event.data?.type === 'preview-navigation') {
+                const path = event.data.path; // e.g., "/about" or "/"
+
+                // transform /about -> pages/about, app/about, etc.
+                const searchPath = path.startsWith('/') ? path.substring(1) : path;
+
+                // 1. Exact match (rare for file paths vs routes)
+                if (allGeneratedFiles[searchPath]) {
+                    setPreviewRoute(searchPath);
+                    return;
+                }
+
+                // 2. Simple fuzzy search
+                // e.g. /about -> src/pages/About.tsx
+                const found = Object.keys(allGeneratedFiles).find(p => {
+                    const normalized = p.toLowerCase();
+                    const search = searchPath.toLowerCase();
+                    return normalized.includes(search) &&
+                        (normalized.endsWith('.tsx') || normalized.endsWith('.jsx'));
+                });
+
+                if (found) {
+                    setPreviewRoute(found);
+                    setIframeKey(k => k + 1); // Force reload
+                }
             }
         };
         window.addEventListener('message', handleMessage);
         return () => window.removeEventListener('message', handleMessage);
-    }, []);
+    }, [allGeneratedFiles]); // minimal deps to keep listener fresh
 
     // Clear error when code changes
     useEffect(() => {
@@ -989,7 +1063,7 @@ function StudioContent() {
         }
     }, [generatedCode, previousCode]);
 
-    const handleSend = useCallback(async (promptMessage?: string) => {
+    const handleSend = useCallback(async (promptMessage?: string, modeArg?: "plan" | "build" | "chat", options?: { webSearch?: boolean }) => {
         const prompt = promptMessage || input;
         if (!prompt.trim() || generating) return;
         setInput('');
@@ -1000,18 +1074,22 @@ function StudioContent() {
         const isNewSession = promptParam && !loadProjectId;
 
         // Determine the orchestration mode
-        // Plan mode → use plan_interactive for question-based flow
-        const mode = chatMode === 'plan' ? 'plan_interactive' : 'chat';
+        // If specific mode requested (like 'chat' for debug), respect it
+        // Otherwise derive from state
+        let mode: 'chat' | 'plan_interactive' | 'generate' = chatMode === 'plan' ? 'plan_interactive' : 'chat';
+        if (modeArg === 'chat') mode = 'chat';
+        if (modeArg === 'plan') mode = 'plan_interactive'; // If explicitly prompted for plan
 
-        // For new sessions, default to 'generate' mode for production-ready code
-        // Otherwise check for generate keywords
-        const isGenerateRequest = isNewSession || (chatMode === 'chat' && (
+        // For new sessions, or if in chat mode and using build keywords, default to 'generate'
+        // BUT if explicitly in 'plan' mode, we stay in 'plan_interactive' to allow questioning.
+        const isGenerateRequest = (isNewSession || (chatMode === 'chat' && (
             prompt.toLowerCase().includes('build') ||
             prompt.toLowerCase().includes('generate') ||
             prompt.toLowerCase().includes('create') ||
             prompt.toLowerCase().includes('make') ||
             prompt.toLowerCase().includes('design')
-        ));
+        ))) && chatMode !== 'plan';
+
         const orchestrationMode = isGenerateRequest ? 'generate' : mode;
 
         // Add user message
@@ -1051,6 +1129,19 @@ function StudioContent() {
             }
         }
 
+        // AUTO-INJECT ERROR CONTEXT
+        // If there is a visible preview error, append it to the prompt context so the AI knows.
+        let augmentedPrompt = prompt;
+        if (previewError) {
+            console.log("Injecting preview error into context:", previewError);
+            // We don't change the UI message (user shouldn't see ugly error dumps), 
+            // but we send it to the backend.
+            // We can use the 'webSearchContext' field as a generic context carrier if needed, 
+            // or just append to the prompt sent to streamChat (but not displayed).
+            // Let's hide it in the specialized context or just append effectively.
+            // Best approach: Add it to the 'existingCode' context or similar.
+        }
+
         // Build conversation history from messages
         // For new sessions, only include the welcome message to ensure fresh start
         const conversationHistory = isNewSession
@@ -1069,9 +1160,25 @@ function StudioContent() {
 
         try {
             // Pass existing code context so the AI can reason about modifications
-            const existingCodeContext = generatedCode || (Object.keys(allGeneratedFiles).length > 0
+            let existingCodeContext = generatedCode || (Object.keys(allGeneratedFiles).length > 0
                 ? JSON.stringify(allGeneratedFiles)
                 : undefined);
+
+            // CRITICAL: If there is a runtime error visible in the preview, 
+            // ALERT the AI about it so it can fix it.
+            if (previewError) {
+                const errorAlert = `\n\n<active_runtime_error>\nThe user's application is currently crashing with this error:\n${JSON.stringify(previewError, null, 2)}\n\nFix this error in your next response.\n</active_runtime_error>`;
+                if (existingCodeContext) {
+                    existingCodeContext += errorAlert;
+                } else {
+                    existingCodeContext = errorAlert;
+                }
+            }
+
+            // Build theme context string from the user's selected design theme
+            const themeCtx = designTheme
+                ? `Theme: ${designTheme.name} — ${designTheme.description}. Style: ${designTheme.style}. Colors: primary=${designTheme.colors.primary}, secondary=${designTheme.colors.secondary}, accent=${designTheme.colors.accent}, background=${designTheme.colors.background}, surface=${designTheme.colors.surface}, text=${designTheme.colors.text}. Font: ${designTheme.font}.`
+                : undefined;
 
             await streamChat({
                 prompt,
@@ -1080,7 +1187,8 @@ function StudioContent() {
                 model: selectedModel.id,
                 conversationHistory,
                 webSearchContext,
-                existingCode: existingCodeContext,
+                existingCode: existingCodeContext, // Pass the error-augmented context
+                themeContext: themeCtx,
                 signal: abortController.signal,
 
                 onStep: (step) => {
@@ -1157,13 +1265,21 @@ function StudioContent() {
                 onFileUpdate: (statuses) => {
                     setImplementationStatus((prev) => prev ? { ...prev, fileUpdates: statuses, phase: 'creating' } : null);
                     // Store completed files and show latest in preview
-                    const completedFiles = statuses.filter((s: FileUpdateStatus) => s.status === 'completed' && s.code);
+                    // NOTE: Backend sends 'completed' or 'written'. We handle both for robustness.
+                    const completedFiles = statuses.filter((s: FileUpdateStatus) =>
+                        (s.status === 'completed' || s.status as any === 'written') && s.code
+                    );
+
                     if (completedFiles.length > 0) {
                         const newFiles: Record<string, string> = {};
                         completedFiles.forEach((f: FileUpdateStatus) => { newFiles[f.path] = f.code!; });
                         setAllGeneratedFiles((prev) => ({ ...prev, ...newFiles }));
+
                         const latestFile = completedFiles[completedFiles.length - 1];
                         setCurrentPreviewFile(latestFile.code!);
+
+                        // CRITICAL: Force preview reload when files are updated
+                        setIframeKey((k) => k + 1);
                         setActiveTab('preview');
                     }
                 },
@@ -1196,6 +1312,11 @@ function StudioContent() {
                             return updated;
                         });
                     }
+
+                    // Force refresh if the command might have changed the environment (like npm install)
+                    if (result.command.includes('npm') || result.command.includes('install')) {
+                        setIframeKey((k) => k + 1);
+                    }
                 },
 
                 onLogAnalysis: (analysis) => {
@@ -1216,6 +1337,23 @@ function StudioContent() {
 
                 onExplanation: (explanation) => {
                     streamingMessageRef.current += `\n\n### 🎨 Design Explanation\n\n${explanation}`;
+                    const currentText = streamingMessageRef.current;
+                    setMessages((m) => {
+                        const updated = [...m];
+                        const idx = streamMsgIndex.current;
+                        if (idx >= 0 && idx < updated.length) {
+                            updated[idx] = { ...updated[idx], content: currentText };
+                        }
+                        return updated;
+                    });
+                },
+
+                onWebSearch: (results) => {
+                    // Display web search results in thinking steps
+                    setThinkingSteps((s) => [...s, `Web Search Result for "${results.query}": ${results.abstract}`]);
+
+                    // Also append to message for visibility
+                    streamingMessageRef.current += `\n\n### 🌐 Web Research\n**Query:** ${results.query}\n\n${results.abstract}\n`;
                     const currentText = streamingMessageRef.current;
                     setMessages((m) => {
                         const updated = [...m];
@@ -1390,6 +1528,9 @@ function StudioContent() {
                 provider: selectedModel.provider,
                 model: selectedModel.id,
                 planAnswers: answers,
+                themeContext: designTheme
+                    ? `Theme: ${designTheme.name} — ${designTheme.description}. Style: ${designTheme.style}. Colors: primary=${designTheme.colors.primary}, secondary=${designTheme.colors.secondary}, accent=${designTheme.colors.accent}, background=${designTheme.colors.background}, surface=${designTheme.colors.surface}, text=${designTheme.colors.text}. Font: ${designTheme.font}.`
+                    : undefined,
                 signal: abortController.signal,
 
                 onStep: (step) => {
@@ -1496,6 +1637,11 @@ function StudioContent() {
             currentFileIndex: 0,
         });
 
+        // Set previous code for diff view
+        if (generatedCode) {
+            setPreviousCode(generatedCode);
+        }
+
         // Add implementing message
         setMessages((m) => [...m, {
             role: 'ai',
@@ -1515,6 +1661,9 @@ function StudioContent() {
                 provider: selectedModel.provider,
                 model: selectedModel.id,
                 planData,
+                themeContext: designTheme
+                    ? `Theme: ${designTheme.name} — ${designTheme.description}. Style: ${designTheme.style}. Colors: primary=${designTheme.colors.primary}, secondary=${designTheme.colors.secondary}, accent=${designTheme.colors.accent}, background=${designTheme.colors.background}, surface=${designTheme.colors.surface}, text=${designTheme.colors.text}. Font: ${designTheme.font}.`
+                    : undefined,
                 signal: abortController.signal,
 
                 onStep: (step) => {
@@ -1562,9 +1711,22 @@ function StudioContent() {
 
                 onCode: (code) => {
                     const codeStr = typeof code === 'string' ? code : JSON.stringify(code, null, 2);
-                    if (generatedCode && previousCode !== generatedCode) {
-                        setPreviousCode(generatedCode);
-                    }
+
+                    // CRITICAL: Capture previousCode ONLY ONCE at the start of a generation cycle.
+                    // If we blindly update previousCode here, it will update on every streamed token,
+                    // making previousCode == generatedCode, thus showing no diff.
+                    // We check if we are already generating (which we are) and if previousCode is NOT yet set for this cycle.
+                    // However, 'generating' state is true for the whole duration. 
+                    // Better approach: Check if the new code is just starting (short length) OR checking if previousCode is null/empty 
+                    // but we might want to keep the OLD successful code as previous.
+
+                    // Actually, the best place to set previousCode is BEFORE calling streamChat.
+                    // But if we must do it here: only set it if it's not already set to the *current* old code.
+                    // The issue is 'previousCode' state update is async.
+
+                    // CORRECT LOGIC: We should have set previousCode in handleImplementPlan before starting streaming.
+                    // Here we just update generatedCode.
+
                     setGeneratedCode(codeStr);
                     setActiveTab('preview');
                 },
@@ -1705,22 +1867,22 @@ function StudioContent() {
 
         setErrorModalOpen(false);
 
-        // Extract the specific error (e.g., "Header is not defined")
-        const errorMatch = previewError.message.match(/(\w+) is not defined/);
-        const componentName = errorMatch ? errorMatch[1] : 'component';
+        // Generic fix prompt for ANY error
+        const fixPrompt = `CRITICAL: The application is crashing with the following error.
 
-        // Create a fix prompt
-        const fixPrompt = `Fix this error in the generated code: "${previewError.message}".
+Error: ${previewError.message}
 
-The component "${componentName}" is being used but not defined. Please:
-1. Define the ${componentName} component inline in the same file
-2. Or use lowercase HTML elements instead (e.g., <${componentName.toLowerCase()}> instead of <${componentName} />)
-3. Make sure all custom components are self-contained in a single file
+Stack Trace:
+${previewError.stack || 'No stack trace available'}
 
-Current error details:
-${previewError.stack || previewError.message}`;
+Please analyze the error and FIX the code. 
+- If a component is missing, define it.
+- If an import is wrong, fix it.
+- If there is a logic error, correct it.
 
-        // Populate the prompt input and trigger send
+Return the corrected code.`;
+
+        // Trigger the fix
         if (handleSendRef.current) {
             handleSendRef.current(fixPrompt);
         }
@@ -1846,6 +2008,44 @@ ${previewError.stack || previewError.message}`;
                     {/* Messages */}
                     {!chatCollapsed && (
                         <>
+                            {/* Sticky Generation Status Header - Shows current action/todo above chat */}
+                            {implementationStatus && implementationStatus.phase !== 'done' && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: -20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="sticky top-0 z-30 px-4 py-3 bg-background/80 backdrop-blur-md border-b border-white/5 shadow-sm"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse relative">
+                                            <div className="absolute inset-0 rounded-full bg-blue-500 animate-ping opacity-75" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-0.5">
+                                                Active Task
+                                            </p>
+                                            <p className="text-sm font-medium text-foreground truncate">
+                                                {implementationStatus.todos.find(t => t.status === 'in_progress')?.label ||
+                                                    (implementationStatus.phase === 'installing' ? 'Installing dependencies...' : 'Generating code...')}
+                                            </p>
+                                        </div>
+                                        <div className="text-xs font-mono text-muted-foreground bg-secondary/50 px-2 py-1 rounded">
+                                            {implementationStatus.todos.filter(t => t.status === 'completed').length} / {implementationStatus.todos.length}
+                                        </div>
+                                    </div>
+                                    {/* Progress bar */}
+                                    <div className="h-1 w-full bg-secondary mt-3 rounded-full overflow-hidden">
+                                        <motion.div
+                                            className="h-full bg-blue-500"
+                                            initial={{ width: '0%' }}
+                                            animate={{
+                                                width: `${(implementationStatus.todos.filter(t => t.status === 'completed').length / Math.max(1, implementationStatus.todos.length)) * 100}%`
+                                            }}
+                                            transition={{ duration: 0.5 }}
+                                        />
+                                    </div>
+                                </motion.div>
+                            )}
+
                             <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
                                 <AnimatePresence>
                                     {messages.map((msg, i) => (
@@ -2551,6 +2751,22 @@ ${previewError.stack || previewError.message}`;
                                 {device === 'desktop' ? <Monitor className="h-4 w-4" /> : <Smartphone className="h-4 w-4" />}
                             </Button>
                             <div className="h-4 w-px bg-border mx-1" />
+
+                            {/* NEW: Send Logs Button */}
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                                onClick={() => {
+                                    // Capture basic console logs if possible or just trigger an analysis request
+                                    handleSend('Please analyze the browser console logs and fix any errors you see.', 'chat');
+                                }}
+                                title="Ask AI to check logs"
+                            >
+                                <Terminal className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">Debug</span>
+                            </Button>
+
                             <Button variant="ghost" size="icon" className="h-8 w-8 rounded-md" onClick={handleDownload} title="Download code"><Download className="h-4 w-4" /></Button>
 
                             {activeTab === 'code' && (

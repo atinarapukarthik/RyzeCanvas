@@ -33,9 +33,9 @@ ALLOWED_COMMANDS = {
     # Git
     "git",
     # File operations
-    "ls", "dir", "cat", "type", "find", "tree",
+    "ls", "dir", "cat", "type", "find", "tree", "grep", "mkdir",
     # System info
-    "node", "npm", "python", "python3", "pip"
+    "node", "npm", "python", "python3", "pip", "pwd"
 }
 
 
@@ -45,7 +45,10 @@ def is_command_allowed(command: str) -> bool:
     Prevents execution of dangerous commands.
     """
     # Extract the base command (first word)
-    base_cmd = command.strip().split()[0]
+    # Handle both unix-style (ls) and windows-style (dir)
+    # Also handle compound commands like 'npm install'
+    clean_cmd = command.strip().replace("&&", ";").split(";")[0].strip()
+    base_cmd = clean_cmd.split()[0]
 
     # Remove path separators (e.g., ./npm, ../node)
     base_cmd = os.path.basename(base_cmd)
@@ -64,72 +67,117 @@ async def execute_command(
 ) -> CommandResult:
     """
     Execute a shell command asynchronously with timeout and output capture.
-
-    Args:
-        command: Shell command to execute
-        cwd: Working directory (defaults to current directory)
-        timeout: Max execution time in seconds (default: 60)
-
-    Returns:
-        CommandResult with stdout, stderr, exit code, and errors
     """
-    # Security check
-    if not is_command_allowed(command):
+    # Default CWD to project workspace
+    if cwd is None:
+        # We target the workspace folder where generated apps live
+        cwd = os.path.abspath(os.path.join(os.getcwd(), "..", "workspace"))
+        if not os.path.exists(cwd):
+            os.makedirs(cwd, exist_ok=True)
+
+    # Determine shell based on platform
+    is_windows = platform.system() == "Windows"
+
+    # Command translation for Windows (Unix-isms to Windows equivalents)
+    if is_windows:
+        parts = command.strip().split()
+        if parts:
+            base = parts[0].lower()
+            # Map common unix commands used by AI to PowerShell equivalents
+            aliases = {
+                "ls": "dir",
+                "cat": "type",
+                "rm": "del",
+                "cp": "copy",
+                "mv": "move",
+                "pwd": "cd",
+                "clear": "cls",
+                "grep": "findstr"
+            }
+            if base in aliases:
+                # Basic alias replacement
+                command = aliases[base] + " " + " ".join(parts[1:])
+        
+        # On Windows, wrap everything in powershell for better behavior
+        cmd_escaped = command.replace('"', '\\"')
+        command = f'powershell -Command "{cmd_escaped}"'
+
+    # Security check (check the translated/final command's base)
+    try:
+        if not is_command_allowed(command):
+            # We check the original base too just in case
+            if is_windows and "-Command" in command:
+                # Extract from powershell wrapper
+                parts = command.split("-Command")
+                if len(parts) > 1:
+                    cmd_payload = parts[-1].strip().strip('"')
+                    if cmd_payload:
+                        original_base = cmd_payload.split()[0]
+                    else:
+                        original_base = "unknown"
+                else:
+                    original_base = "unknown"
+            else:
+                original_base = command.split()[0] if command.strip() else "unknown"
+
+            if not is_command_allowed(original_base):
+                return CommandResult(
+                    command=command,
+                    exit_code=-1,
+                    stdout="",
+                    stderr="",
+                    error=f"Command not allowed: {original_base}",
+                    timeout=False
+                )
+    except Exception as e:
+        logger.error(f"Security check failed: {e}")
+        # If we can't parse it, block it for safety
         return CommandResult(
             command=command,
             exit_code=-1,
             stdout="",
             stderr="",
-            error=f"Command not allowed for security reasons: {command.split()[0]}"
+            error=f"Security parsing error: {str(e)}",
+            timeout=False
         )
 
-    # Determine shell based on platform
-    is_windows = platform.system() == "Windows"
-    shell = is_windows
-
     try:
-        # Create subprocess
+        # Use asyncio.create_subprocess_shell
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
-            shell=shell,
         )
 
-        # Wait for completion with timeout
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 process.communicate(),
                 timeout=timeout
             )
-
+            
             stdout = stdout_bytes.decode('utf-8', errors='replace').strip()
             stderr = stderr_bytes.decode('utf-8', errors='replace').strip()
-            exit_code = process.returncode or 0
-
+            
             return CommandResult(
                 command=command,
-                exit_code=exit_code,
+                exit_code=process.returncode or 0,
                 stdout=stdout,
                 stderr=stderr,
                 timeout=False
             )
 
         except asyncio.TimeoutError:
-            # Kill the process on timeout
             try:
                 process.kill()
-                await process.wait()
-            except Exception:
+            except:
                 pass
-
             return CommandResult(
                 command=command,
                 exit_code=-1,
                 stdout="",
                 stderr="",
-                error=f"Command timed out after {timeout} seconds",
+                error=f"Timed out after {timeout}s",
                 timeout=True
             )
 
@@ -139,7 +187,8 @@ async def execute_command(
             exit_code=-1,
             stdout="",
             stderr="",
-            error=f"Execution error: {str(e)}"
+            error=f"Execution failed: {str(e)}",
+            timeout=False
         )
 
 
