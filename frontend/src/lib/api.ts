@@ -53,7 +53,7 @@ export interface ChatMessage {
 function mapProject(apiProject: Record<string, any>): Project {
   return {
     id: apiProject.id.toString(),
-    title: apiProject.title,
+    title: apiProject.name || apiProject.title,
     prompt: apiProject.description || "",
     code: apiProject.code_json || "",
     userId: apiProject.user_id.toString(),
@@ -230,7 +230,7 @@ export async function fetchProjects(): Promise<Project[]> {
 export async function createProject(prompt: string, options?: { code?: string, provider?: string, model?: string, webSearchEnabled?: boolean, uploadedFiles?: File[] }): Promise<Project> {
   // Mapping prompt to description, code to code_json
   const payload = {
-    title: prompt.slice(0, 30) || "New Project",
+    name: prompt.slice(0, 30) || "New Project",
     description: prompt,
     code_json: options?.code || "// Generated code",
     is_public: false,
@@ -250,7 +250,7 @@ export async function createProject(prompt: string, options?: { code?: string, p
 
 export async function updateProject(projectId: string, updates: Partial<{ title: string, description: string, code_json: string }>): Promise<Project> {
   const payload = {
-    ...(updates.title && { title: updates.title }),
+    ...(updates.title && { name: updates.title }),
     ...(updates.description && { description: updates.description }),
     ...(updates.code_json && { code_json: updates.code_json }),
   };

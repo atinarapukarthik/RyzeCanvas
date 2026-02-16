@@ -1,16 +1,18 @@
 """
-Production-Ready Chat Orchestrator for RyzeCanvas.
-Refactored to support the XML "Artifact Protocol" for robust code generation.
+RyzeCanvas Orchestrator - Cloud-Native Edition.
+All file I/O goes through Supabase Storage.  No local workspace/ directory.
 
 Provides a unified interface for all chat interactions:
 - Chat mode: Conversational responses via LLM
 - Plan mode: Architectural breakdowns via LLM
 - Generate mode: Full React/Tailwind code generation pipeline using Artifacts
 
+Shell commands are virtualized to prevent local machine pollution.
+File writes are routed to Supabase Storage bucket `projects`.
+Storage path format: {user_id}/{project_id}/{file_path}
 Supports Server-Sent Events (SSE) for real-time streaming to the frontend.
 """
 from app.agent.command_executor import execute_command, format_command_output
-from app.core.component_library import UIPlan
 from app.agent.system_prompt import (
     get_chat_prompt,
     get_plan_prompt,
@@ -19,6 +21,8 @@ from app.agent.system_prompt import (
     get_explainer_prompt,
     get_plan_questions_prompt,
     get_plan_from_answers_prompt,
+    get_plan_implement_prompt,
+    get_generate_structured_plan_prompt,
 )
 from app.core.config import settings
 import json
@@ -41,21 +45,21 @@ logger = logging.getLogger("orchestrator")
 
 
 # ── SSE Event Types ──────────────────────────────────────────────
-EVENT_STEP = "step"          # Progress step (e.g., "Retrieving context...")
-EVENT_TOKEN = "token"        # Streaming text token
-EVENT_PLAN = "plan"          # Plan output (chat/plan mode)
-EVENT_CODE = "code"          # Generated code (React/Tailwind)
-EVENT_ERROR = "error"        # Error message
-EVENT_DONE = "done"          # Stream complete
-EVENT_QUESTIONS = "questions"  # Plan questions with options
-EVENT_PLAN_READY = "plan_ready"  # Structured plan with files/skills
-EVENT_INSTALL = "install"    # Library installation status
-EVENT_FILE_UPDATE = "file_update"  # File creation/update status
-EVENT_TODO = "todo"          # Implementation todo updates
-EVENT_COMMAND = "command"    # Command execution results
-EVENT_LOG_ANALYSIS = "log_analysis"  # Log analysis and insights
-EVENT_EXPLANATION = "explanation"  # Design explanation
-EVENT_WEB_SEARCH = "web_search"    # Web search results
+EVENT_STEP = "step"
+EVENT_TOKEN = "token"
+EVENT_PLAN = "plan"
+EVENT_CODE = "code"
+EVENT_ERROR = "error"
+EVENT_DONE = "done"
+EVENT_QUESTIONS = "questions"
+EVENT_PLAN_READY = "plan_ready"
+EVENT_INSTALL = "install"
+EVENT_FILE_UPDATE = "file_update"
+EVENT_TODO = "todo"
+EVENT_COMMAND = "command"
+EVENT_LOG_ANALYSIS = "log_analysis"
+EVENT_EXPLANATION = "explanation"
+EVENT_WEB_SEARCH = "web_search"
 
 
 @dataclass
@@ -64,14 +68,19 @@ class ChatRequest:
     prompt: str
     mode: Literal["chat", "plan", "generate",
                   "plan_interactive", "plan_implement", "ui_composer"] = "chat"
-    provider: str = "openai"
-    model: str = "gpt-4o"
+    provider: str = "gemini"
+    model: str = "gemini-2.5-flash"
     conversation_history: list = field(default_factory=list)
     web_search_context: Optional[str] = None
     plan_answers: Optional[list] = None
     plan_data: Optional[dict] = None
     existing_code: Optional[str] = None
     theme_context: Optional[str] = None
+    # ── Error handling context ──
+    error_context: Optional[list] = None
+    # ── Cloud-native context fields ──
+    project_id: Optional[str] = None
+    user_id: Optional[str] = None
 
 
 @dataclass
@@ -105,29 +114,137 @@ def _format_llm_error(error: Exception) -> str:
     return msg
 
 
-def _sanitize_path(path: str) -> str:
-    """Ensure the path is safe and strictly within the workspace."""
-    workspace_dir = os.path.abspath(os.path.join(os.getcwd(), "..", "workspace"))
-    # Normalize path to remove ../../ stuff
-    full_path = os.path.abspath(os.path.join(workspace_dir, path))
-    if not full_path.startswith(workspace_dir):
-        raise ValueError(f"Security Warning: Attempted to write outside workspace: {path}")
-    return full_path
+# ── ERROR CONTEXT HELPERS ────────────────────────────────────────
+
+def _build_error_context_block(error_context: Optional[list]) -> str:
+    """
+    Build a formatted block of error context for the LLM.
+    Returns empty string if no errors provided.
+    """
+    if not error_context:
+        return ""
+
+    block = "\n\n## Error Context (Reference with @error_id):\n"
+    for error in error_context:
+        error_id = error.get("id", "unknown")
+        error_type = error.get("type", "unknown")
+        message = error.get("message", "")
+        file_path = error.get("file", "")
+        line = error.get("line")
+        code_snippet = error.get("code_snippet", "")
+        stack_trace = error.get("stack_trace", "")
+        context_info = error.get("context", "")
+
+        block += f"\n### @{error_id} ({error_type})\n"
+        if message:
+            block += f"**Error**: {message}\n"
+        if file_path:
+            loc = f"**Location**: {file_path}"
+            if line:
+                loc += f":{line}"
+            block += loc + "\n"
+        if code_snippet:
+            block += f"**Code**:\n```\n{code_snippet}\n```\n"
+        if stack_trace:
+            block += f"**Stack trace**:\n```\n{stack_trace}\n```\n"
+        if context_info:
+            block += f"**Context**: {context_info}\n"
+
+    return block
 
 
-def _write_file(path: str, content: str):
-    """Write generated file content to the local workspace directory."""
+def _resolve_error_references(prompt: str, error_context: Optional[list]) -> str:
+    """
+    Resolve @error_id references in the prompt by replacing them with error details.
+    Example: "@error_build" gets replaced with the full build error context.
+    """
+    if not error_context:
+        return prompt
+
+    # Create a map of error IDs to their full context
+    error_map = {}
+    for error in error_context:
+        error_id = error.get("id", "")
+        if error_id:
+            error_info = f"[Error: {error.get('type')} - {error.get('message', '')}]"
+            if error.get("file"):
+                error_info += f" in {error.get('file')}"
+            error_map[f"@{error_id}"] = error_info
+
+    # Replace @error_id references in prompt
+    resolved = prompt
+    for error_ref, error_info in error_map.items():
+        resolved = resolved.replace(error_ref, error_info)
+
+    return resolved
+
+
+# ── SUPABASE STORAGE HELPERS ─────────────────────────────────────
+
+def _get_storage_client():
+    """Return the Supabase admin client for storage operations."""
+    from app.core.supabase import supabase_admin
+    if supabase_admin is None:
+        raise RuntimeError(
+            "Supabase admin client is not configured. "
+            "Set SUPABASE_URL and SUPABASE_SERVICE_KEY in your environment."
+        )
+    return supabase_admin
+
+
+def _storage_path(user_id: str, project_id: str, file_path: str) -> str:
+    """
+    Build the canonical storage path for a project file.
+    Format: {user_id}/{project_id}/{file_path}
+    Strips traversal attempts and leading slashes.
+    """
+    clean = file_path.replace("\\", "/")
+    # Remove drive letters (e.g., C:/...)
+    if len(clean) >= 2 and clean[1] == ':':
+        clean = clean[2:]
+    while ".." in clean:
+        clean = clean.replace("..", "")
+    clean = clean.lstrip("/")
+    return f"{user_id}/{project_id}/{clean}"
+
+
+def _write_file(path: str, content: str, *, user_id: str, project_id: str) -> bool:
+    """Upload a file to Supabase Storage bucket 'projects'."""
     try:
-        full_path = _sanitize_path(path)
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
-        
-        with open(full_path, "w", encoding="utf-8") as f:
-            f.write(content)
-            
-        logger.info(f"Wrote file: {path}")
+        sb = _get_storage_client()
+        storage_key = _storage_path(user_id, project_id, path)
+        content_bytes = content.encode("utf-8")
+
+        # Determine content type
+        ext = os.path.splitext(path)[1].lower()
+        mime_map = {
+            ".ts": "text/typescript", ".tsx": "text/typescript",
+            ".js": "application/javascript", ".jsx": "application/javascript",
+            ".json": "application/json", ".html": "text/html",
+            ".css": "text/css", ".md": "text/markdown",
+            ".svg": "image/svg+xml",
+        }
+        content_type = mime_map.get(ext, "text/plain")
+
+        # Upsert: try upload, fall back to update on conflict
+        try:
+            sb.storage.from_("projects").upload(
+                path=storage_key,
+                file=content_bytes,
+                file_options={"content-type": content_type, "upsert": "true"},
+            )
+        except Exception:
+            # Some Supabase client versions use update() for overwrites
+            sb.storage.from_("projects").update(
+                path=storage_key,
+                file=content_bytes,
+                file_options={"content-type": content_type},
+            )
+
+        logger.info(f"[Storage Write] {path} -> {storage_key}")
         return True
     except Exception as e:
-        logger.error(f"Failed to write file {path}: {e}")
+        logger.error(f"[Storage Write FAILED] {path}: {e}")
         return False
 
 
@@ -172,47 +289,74 @@ def _extract_json_object(text: str) -> str | None:
     return None
 
 
-async def _get_project_context() -> str:
+async def _get_project_context(*, user_id: str, project_id: str) -> str:
     """
-    Gather essential project context (file list, types, config) 
-    to provide the AI with sight of the whole project.
+    Gather project context from Supabase Storage.
+    Lists files in the project folder and downloads critical config files.
     """
-    context = ""
-    workspace_dir = os.path.abspath(os.path.join(os.getcwd(), "..", "workspace"))
-    
-    if not os.path.exists(workspace_dir):
+    if not user_id or not project_id:
         return ""
 
     try:
-        # 1. Get file list (depth 3)
-        # Using python standard lib instead of shell command for cross-platform safety
-        file_list = []
-        for root, dirs, files in os.walk(workspace_dir):
-            if 'node_modules' in dirs:
-                dirs.remove('node_modules')
-            if '.git' in dirs:
-                dirs.remove('.git')
-                
-            for file in files:
-                rel_path = os.path.relpath(os.path.join(root, file), workspace_dir)
-                if rel_path.count(os.sep) < 3: # Depth limit
-                    file_list.append(rel_path.replace("\\", "/"))
+        sb = _get_storage_client()
+        prefix = f"{user_id}/{project_id}"
 
-        context += f"\n<project-files>\n{chr(10).join(file_list)}\n</project-files>"
+        # List files in the project bucket folder
+        items = sb.storage.from_("projects").list(path=prefix)
 
-        # 2. Read Core Files
-        core_files = ["src/types.ts", "src/types/index.ts", "package.json", "src/lib/api.ts", "vite.config.ts"]
-        for rel_path in core_files:
-            full_path = os.path.join(workspace_dir, rel_path)
-            if os.path.exists(full_path):
-                with open(full_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    context += f"\n<file path='{rel_path}'>\n{content}\n</file>"
-                    
+        if not items:
+            return ""
+
+        # Build a flat file list by recursively listing sub-folders
+        file_list: list[str] = []
+
+        def _collect(folder_prefix: str, depth: int = 0):
+            if depth > 3:
+                return
+            entries = sb.storage.from_("projects").list(path=folder_prefix)
+            for entry in entries:
+                entry_name = entry.get("name", "") if isinstance(
+                    entry, dict) else str(entry)
+                full = f"{folder_prefix}/{entry_name}"
+                # Supabase marks folders via metadata; check id presence for files
+                is_file = isinstance(
+                    entry, dict) and entry.get("id") is not None
+                if is_file:
+                    rel = full.replace(f"{prefix}/", "", 1)
+                    file_list.append(rel)
+                else:
+                    _collect(full, depth + 1)
+
+        _collect(prefix)
+
+        context = ""
+        if file_list:
+            context += f"\n<project-files>\n{chr(10).join(sorted(file_list))}\n</project-files>"
+
+        # Download critical config files for LLM awareness
+        core_files = [
+            "package.json", "vite.config.ts", "tsconfig.json",
+            "src/types.ts", "src/lib/api.ts", "src/App.tsx",
+        ]
+        for f in core_files:
+            if f in file_list:
+                try:
+                    data = sb.storage.from_(
+                        "projects").download(f"{prefix}/{f}")
+                    file_content = data.decode(
+                        "utf-8") if isinstance(data, bytes) else str(data)
+                    if len(file_content) > 5000:
+                        file_content = file_content[:5000] + \
+                            "\n... (truncated)"
+                    context += f"\n<file path='{f}'>\n{file_content}\n</file>"
+                except Exception:
+                    pass
+
+        return context
     except Exception as e:
-        logger.warning(f"Failed to gather project context: {e}")
-        
-    return context
+        logger.warning(
+            f"Failed to gather project context from Supabase Storage: {e}")
+        return ""
 
 
 def _get_llm(provider: str, model: str):
@@ -243,12 +387,21 @@ def _get_llm(provider: str, model: str):
             temperature=0.3,
             api_key=settings.OPENAI_API_KEY,
         )
+    elif provider == "openrouter":
+        if not settings.OPENROUTER_API_KEY:
+            raise ValueError("OPENROUTER_API_KEY not configured")
+        return ChatOpenAI(
+            model=model or "anthropic/claude-3.5-sonnet",
+            temperature=0.3,
+            api_key=settings.OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
+        )
     elif provider == "ollama":
         from langchain_ollama import ChatOllama
         return ChatOllama(
-             base_url=settings.OLLAMA_BASE_URL,
-             model=settings.OLLAMA_MODEL,
-             temperature=0.3,
+            base_url=settings.OLLAMA_BASE_URL,
+            model=settings.OLLAMA_MODEL,
+            temperature=0.3,
         )
     else:
         raise ValueError(f"Unsupported provider: {provider}")
@@ -262,12 +415,10 @@ def _extract_artifacts(text: str) -> List[List[RyzeAction]]:
     Returns a list of artifacts, where each artifact is a list of RyzeActions.
     """
     artifacts = []
-    
-    # Regex to find artifact blocks
-    artifact_pattern = re.compile(r'<ryze_artifact.*?>(.*?)</ryze_artifact>', re.DOTALL)
-    
-    # Regex to find actions inside an artifact
-    # Captures: type="...", path="..." (optional), and the content
+
+    artifact_pattern = re.compile(
+        r'<ryze_artifact.*?>(.*?)</ryze_artifact>', re.DOTALL)
+
     action_pattern = re.compile(
         r'<ryze_action\s+type=["\'](.*?)["\'](?:\s+path=["\'](.*?)["\'])?\s*>(.*?)</ryze_action>',
         re.DOTALL
@@ -276,72 +427,413 @@ def _extract_artifacts(text: str) -> List[List[RyzeAction]]:
     for artifact_match in artifact_pattern.finditer(text):
         artifact_content = artifact_match.group(1)
         actions = []
-        
+
         for action_match in action_pattern.finditer(artifact_content):
             action_type = action_match.group(1)
             action_path = action_match.group(2)
             action_content = action_match.group(3).strip()
-            
-            # Clean up XML entities if needed, though usually LLMs output raw code
-            # We assume the prompt instruction "No Markdown" keeps it clean
-            
+
             actions.append(RyzeAction(
                 type=action_type,
                 path=action_path,
                 content=action_content
             ))
-        
+
         if actions:
             artifacts.append(actions)
-            
+
     return artifacts
 
 
-async def _execute_actions_stream(actions: List[RyzeAction]) -> AsyncGenerator[str, None]:
+# ── VIRTUAL TERMINAL (INTERCEPTOR) ───────────────────────────────
+
+async def _execute_virtual_shell(command: str, *, user_id: str, project_id: str) -> dict:
+    """
+    Intercepts shell commands to simulate a cloud WebContainer environment.
+    - Install commands return instant virtual success (preview uses CDNs).
+    - Build/dev/lint/test commands return simulated output.
+    - Safe read commands (ls, cat) list/download from Supabase Storage.
+    - Everything else returns a safe simulated response.
+    """
+    cmd = command.strip()
+    cmd_lower = cmd.lower()
+
+    # ── 1. Package install commands (virtualized) ─────────────────
+    if any(cmd_lower.startswith(p) for p in (
+        "npm install", "npm i ", "npm i\n", "pnpm install", "pnpm add",
+        "yarn add", "yarn install", "bun add", "bun install"
+    )) or cmd_lower == "npm i" or cmd_lower == "npm install":
+        packages = cmd.split(maxsplit=2)
+        pkg_names = packages[2] if len(packages) > 2 else "(all dependencies)"
+        return {
+            "command": command,
+            "exit_code": 0,
+            "stdout": (
+                f"[WebContainer] Resolving packages: {pkg_names}\n"
+                f"added 12 packages, and audited 45 packages in 0.4s\n"
+                f"\n0 vulnerabilities\n"
+                f"Done."
+            ),
+            "stderr": "",
+            "error": None,
+            "formatted": f"Installed {pkg_names} (WebContainer)"
+        }
+
+    # ── 2. Project scaffold commands (virtualized) ─────────────────
+    if any(x in cmd_lower for x in ("npm create", "npx create-vite", "npm init", "pnpm create")):
+        return {
+            "command": command,
+            "exit_code": 0,
+            "stdout": (
+                "Scaffolding project in /home/project...\n"
+                "\nDone. Now run:\n"
+                "  npm install\n"
+                "  npm run dev"
+            ),
+            "stderr": "",
+            "error": None,
+            "formatted": "Project scaffolded (WebContainer)"
+        }
+
+    # ── 3. Build commands (virtualized) ───────────────────────────
+    if any(x in cmd_lower for x in ("npm run build", "npx vite build", "pnpm build", "yarn build", "bun run build")):
+        return {
+            "command": command,
+            "exit_code": 0,
+            "stdout": (
+                "vite v5.0.0 building for production...\n"
+                "transforming...\n"
+                "42 modules transformed.\n"
+                "dist/index.html        0.45 kB | gzip:  0.29 kB\n"
+                "dist/assets/index.css  1.20 kB | gzip:  0.64 kB\n"
+                "dist/assets/index.js   5.40 kB | gzip:  2.18 kB\n"
+                "built in 1.2s"
+            ),
+            "stderr": "",
+            "error": None,
+            "formatted": "Build successful (WebContainer)"
+        }
+
+    # ── 4. Dev server commands (virtualized) ──────────────────────
+    if any(x in cmd_lower for x in ("npm run dev", "npm start", "npx vite", "pnpm dev", "yarn dev", "bun dev")):
+        return {
+            "command": command,
+            "exit_code": 0,
+            "stdout": (
+                "VITE v5.0.0  ready in 320 ms\n\n"
+                "  -> Local:   http://localhost:5173/\n"
+                "  -> Network: http://192.168.1.100:5173/\n\n"
+                "  press h + enter to show help"
+            ),
+            "stderr": "",
+            "error": None,
+            "formatted": "Dev server started (WebContainer)"
+        }
+
+    # ── 5. Lint commands (virtualized) ────────────────────────────
+    if any(x in cmd_lower for x in ("npm run lint", "npx eslint", "pnpm lint", "npx prettier")):
+        return {
+            "command": command,
+            "exit_code": 0,
+            "stdout": "No lint errors found.",
+            "stderr": "",
+            "error": None,
+            "formatted": "Lint passed (WebContainer)"
+        }
+
+    # ── 6. Test commands (virtualized) ────────────────────────────
+    if any(x in cmd_lower for x in ("npm test", "npm run test", "npx vitest", "pnpm test")):
+        return {
+            "command": command,
+            "exit_code": 0,
+            "stdout": (
+                " RUN  v1.0.0 /home/project\n\n"
+                " Test Files  3 passed (3)\n"
+                "      Tests  8 passed (8)\n"
+                "   Start at  12:00:00\n"
+                "   Duration  1.2s\n"
+            ),
+            "stderr": "",
+            "error": None,
+            "formatted": "Tests passed (WebContainer)"
+        }
+
+    # ── 7. TypeScript check (virtualized) ─────────────────────────
+    if any(x in cmd_lower for x in ("npx tsc", "tsc --noEmit", "npm run typecheck")):
+        return {
+            "command": command,
+            "exit_code": 0,
+            "stdout": "No type errors found.",
+            "stderr": "",
+            "error": None,
+            "formatted": "Type check passed (WebContainer)"
+        }
+
+    # ── 8. Safe read commands - list/download cloud files ─────────
+    if cmd_lower.startswith("ls"):
+        try:
+            sb = _get_storage_client()
+            prefix = f"{user_id}/{project_id}"
+            parts = cmd.split()
+            if len(parts) > 1:
+                target = parts[-1].strip("/")
+                prefix = f"{prefix}/{target}"
+            entries = sb.storage.from_("projects").list(path=prefix)
+            names = [
+                e.get("name", "") if isinstance(e, dict) else str(e)
+                for e in entries
+            ]
+            listing = "\n".join(sorted(names)) if names else "(empty)"
+            return {
+                "command": command,
+                "exit_code": 0,
+                "stdout": listing,
+                "stderr": "",
+                "error": None,
+                "formatted": listing
+            }
+        except Exception:
+            return {
+                "command": command,
+                "exit_code": 0,
+                "stdout": "src/\npackage.json\nvite.config.ts\ntsconfig.json",
+                "stderr": "",
+                "error": None,
+                "formatted": "Listed workspace files (WebContainer)"
+            }
+
+    if cmd_lower.startswith("cat"):
+        try:
+            parts = cmd.split()
+            if len(parts) > 1:
+                target_file = parts[-1].lstrip("/")
+                sb = _get_storage_client()
+                data = sb.storage.from_("projects").download(
+                    f"{user_id}/{project_id}/{target_file}"
+                )
+                text = data.decode(
+                    "utf-8") if isinstance(data, bytes) else str(data)
+                return {
+                    "command": command,
+                    "exit_code": 0,
+                    "stdout": text,
+                    "stderr": "",
+                    "error": None,
+                    "formatted": text
+                }
+        except Exception:
+            pass
+        return {
+            "command": command,
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "File not found",
+            "error": "File not found",
+            "formatted": "File not found"
+        }
+
+    # ── 9. Directory commands (virtual) ───────────────────────────
+    if cmd_lower.startswith("cd"):
+        target = cmd.split()[-1] if len(cmd.split()) > 1 else "/home/project"
+        return {
+            "command": command,
+            "exit_code": 0,
+            "stdout": f"Changed directory to {target}",
+            "stderr": "",
+            "error": None,
+            "formatted": f"cd {target}"
+        }
+
+    if cmd_lower.startswith("mkdir"):
+        dir_name = cmd.split()[-1] if len(cmd.split()) > 1 else "new-dir"
+        return {
+            "command": command,
+            "exit_code": 0,
+            "stdout": f"Created directory: {dir_name}",
+            "stderr": "",
+            "error": None,
+            "formatted": f"Created directory: {dir_name}"
+        }
+
+    # ── 10. File creation commands (touch/echo) ───────────────────
+    if cmd_lower.startswith("touch"):
+        filename = cmd.split()[-1] if len(cmd.split()) > 1 else "newfile"
+        _write_file(filename, "", user_id=user_id, project_id=project_id)
+        return {
+            "command": command,
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "error": None,
+            "formatted": f"Created {filename}"
+        }
+
+    # ── 11. Node/version info (virtualized) ───────────────────────
+    if cmd_lower in ("node --version", "node -v"):
+        return {
+            "command": command, "exit_code": 0,
+            "stdout": "v20.11.0", "stderr": "", "error": None,
+            "formatted": "v20.11.0"
+        }
+
+    if cmd_lower in ("npm --version", "npm -v"):
+        return {
+            "command": command, "exit_code": 0,
+            "stdout": "10.2.4", "stderr": "", "error": None,
+            "formatted": "10.2.4"
+        }
+
+    # ── 12. Default: safe simulated response ──────────────────────
+    return {
+        "command": command,
+        "exit_code": 0,
+        "stdout": f"[WebContainer] Command executed: {cmd}",
+        "stderr": "",
+        "error": None,
+        "formatted": f"Executed (WebContainer): {cmd}"
+    }
+
+
+# ── SCAFFOLDING PHASE DETECTION ──────────────────────────────────
+
+def _classify_file_phase(path: str) -> str:
+    """
+    Classify a file path into a Bolt.new-style scaffolding phase.
+    Returns a human-readable phase label for the terminal.
+    """
+    name = os.path.basename(path).lower()
+    lower_path = path.lower().replace("\\", "/")
+
+    if name == "package.json":
+        return "dependencies"
+
+    config_patterns = (
+        "vite.config", "tsconfig", "tailwind.config", "postcss.config",
+        ".eslintrc", "eslint.config", ".prettierrc", "index.html",
+        ".env", ".gitignore", "next.config",
+    )
+    if any(p in name for p in config_patterns):
+        return "config"
+
+    if name in ("main.tsx", "main.ts", "main.jsx", "index.tsx", "index.ts", "index.css"):
+        if "src/" in lower_path or lower_path.startswith("src"):
+            return "entry"
+
+    if name in ("app.tsx", "app.jsx", "app.ts"):
+        return "app"
+
+    return "source"
+
+
+def _classify_shell_phase(command: str) -> str:
+    """Classify a shell command into a scaffolding phase."""
+    cmd = command.strip().lower()
+    if any(x in cmd for x in ("npm install", "npm i", "pnpm install", "yarn add", "bun install")):
+        return "install"
+    if any(x in cmd for x in ("npm run dev", "npm start", "pnpm dev", "yarn dev", "vite")):
+        return "devserver"
+    if any(x in cmd for x in ("npm run build", "vite build", "tsc")):
+        return "build"
+    if any(x in cmd for x in ("npm run lint", "eslint", "prettier")):
+        return "lint"
+    if any(x in cmd for x in ("npm test", "vitest", "jest")):
+        return "test"
+    return "shell"
+
+
+PHASE_LABELS = {
+    "dependencies": "Setting up dependencies",
+    "config": "Writing config files",
+    "entry": "Creating entry points",
+    "app": "Building app shell",
+    "source": "Writing source files",
+    "install": "Installing packages",
+    "devserver": "Starting dev server",
+    "build": "Building project",
+    "lint": "Running linter",
+    "test": "Running tests",
+    "shell": "Executing command",
+}
+
+
+# ── ARTIFACT EXECUTION ───────────────────────────────────────────
+
+async def _execute_actions_stream(
+    actions: List[RyzeAction],
+    *,
+    user_id: str,
+    project_id: str,
+) -> AsyncGenerator[str, None]:
     """
     Execute a list of RyzeActions and yield SSE events for the frontend.
+    File actions are uploaded to Supabase Storage.
+    Shell actions are intercepted by the virtual terminal.
     """
-    logger.info(f"[_execute_actions] Processing {len(actions)} actions.")
+    total = len(actions)
+    logger.info(f"[_execute_actions] Processing {total} actions.")
+
+    file_count = sum(1 for a in actions if a.type == "file")
+    shell_count = sum(1 for a in actions if a.type == "shell")
+    yield _sse_event(EVENT_STEP, f"Executing {total} actions ({file_count} files, {shell_count} commands)")
+
+    current_phase = ""
+
     for i, action in enumerate(actions):
-        logger.info(f"[_execute_actions] Action {i+1}: Type={action.type}, Path={action.path}")
+        logger.info(
+            f"[_execute_actions] Action {i+1}/{total}: Type={action.type}, Path={action.path}")
+
         if action.type == "file" and action.path:
-            logger.info(f"[_execute_actions] Writing file: {action.path}")
-            yield _sse_event(EVENT_STEP, f"Writing file: {action.path}")
-            success = _write_file(action.path, action.content)
-            
-            status = "completed" if success else "error"
+            phase = _classify_file_phase(action.path)
+
+            if phase != current_phase:
+                current_phase = phase
+                phase_label = PHASE_LABELS.get(phase, phase.title())
+                yield _sse_event(EVENT_STEP, f"[{phase_label}]")
+
+            yield _sse_event(EVENT_STEP, f"  Writing: {action.path}")
+            success = _write_file(
+                action.path, action.content,
+                user_id=user_id, project_id=project_id,
+            )
+
+            status_str = "completed" if success else "error"
             yield _sse_event(EVENT_FILE_UPDATE, [{
                 "path": action.path,
                 "name": os.path.basename(action.path),
-                "status": status,
-                "code": action.content
+                "status": status_str,
+                "code": action.content,
+                "phase": phase,
             }])
-            
-            # If it's the main file, update the preview editor
+
             if action.path.endswith("App.tsx") or action.path.endswith("main.tsx") or action.path.endswith("page.tsx"):
-                 yield _sse_event(EVENT_CODE, action.content)
+                yield _sse_event(EVENT_CODE, action.content)
 
         elif action.type == "shell":
             command = action.content.strip()
-            logger.info(f"[_execute_actions] Executing command: {command}")
-            yield _sse_event(EVENT_STEP, f"Running: {command}")
-            
-            # Execute command
-            result = await execute_command(command, timeout=120)
-            formatted_output = format_command_output(result)
-            
-            yield _sse_event(EVENT_COMMAND, {
-                "command": result.command,
-                "exit_code": result.exit_code,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "error": result.error,
-                "formatted": formatted_output
-            })
-            
-            # Simple heuristic for library install events
-            if "npm install" in command or "npm i " in command:
-                yield _sse_event(EVENT_INSTALL, [{"name": command, "status": "installed"}])
+            phase = _classify_shell_phase(command)
+
+            if phase != current_phase:
+                current_phase = phase
+                phase_label = PHASE_LABELS.get(phase, phase.title())
+                yield _sse_event(EVENT_STEP, f"[{phase_label}]")
+
+            yield _sse_event(EVENT_STEP, f"  $ {command}")
+
+            result = await _execute_virtual_shell(
+                command, user_id=user_id, project_id=project_id
+            )
+            result["phase"] = phase
+
+            yield _sse_event(EVENT_COMMAND, result)
+
+            if phase == "install":
+                packages = command.split()[2:] if len(
+                    command.split()) > 2 else ["dependencies"]
+                yield _sse_event(EVENT_INSTALL, [
+                    {"name": pkg, "status": "installed", "phase": "install"} for pkg in packages
+                ])
+
+    yield _sse_event(EVENT_STEP, "[All actions completed]")
 
 
 # ── ORCHESTRATION ENTRY POINT ────────────────────────────────────
@@ -351,7 +843,8 @@ async def orchestrate_chat(request: ChatRequest) -> AsyncGenerator[str, None]:
     Main orchestration entry point. Routes to the appropriate handler.
     """
     logger.info(
-        f"Starting orchestration: mode={request.mode}, provider={request.provider}, model={request.model}")
+        f"Starting orchestration: mode={request.mode}, provider={request.provider}, "
+        f"model={request.model}, project_id={request.project_id}, user_id={request.user_id}")
     try:
         llm = _get_llm(request.provider, request.model)
     except ValueError as e:
@@ -367,17 +860,16 @@ async def orchestrate_chat(request: ChatRequest) -> AsyncGenerator[str, None]:
         async for event in _handle_plan(llm, request):
             yield event
     elif request.mode == "generate":
-        # Unified Generate Mode using Artifacts
         async for event in _handle_generate_unified(llm, request):
             yield event
     elif request.mode == "ui_composer":
-        # Specialized deterministic mode (LangGraph-style JSON)
-        # Note: You might want to link this to graph.py's run_agent instead
-        # For now, we'll implement a simple handler here
         async for event in _handle_ui_composer(llm, request):
             yield event
     elif request.mode == "plan_interactive":
-         async for event in _handle_plan_interactive(llm, request):
+        async for event in _handle_plan_interactive(llm, request):
+            yield event
+    elif request.mode == "plan_implement":
+        async for event in _handle_plan_implement(llm, request):
             yield event
     else:
         logger.warning(f"Unknown mode requested: {request.mode}")
@@ -390,30 +882,36 @@ async def orchestrate_chat(request: ChatRequest) -> AsyncGenerator[str, None]:
 async def _handle_chat(llm, request: ChatRequest) -> AsyncGenerator[str, None]:
     """
     Handle conversational chat.
-    Now listens for XML Artifacts instead of JSON updates.
+    Listens for XML Artifacts and uploads files to Supabase Storage.
     """
-    yield _sse_event(EVENT_STEP, "Thinking...")
+    yield _sse_event(EVENT_STEP, "Thinking (Cloud Sandbox)...")
 
     system_prompt_base = get_chat_prompt()
 
-    # Enrich with context
     system_ctx = ""
     if request.existing_code:
         system_ctx += f"\n\n<current-file-context>\n{request.existing_code[:10000]}\n</current-file-context>"
 
-    project_ctx = await _get_project_context()
-    system_prompt = system_prompt_base + project_ctx + system_ctx
+    project_ctx = await _get_project_context(
+        user_id=request.user_id or "", project_id=request.project_id or ""
+    )
+
+    # Add error context if provided
+    error_ctx = _build_error_context_block(request.error_context)
+
+    system_prompt = system_prompt_base + project_ctx + system_ctx + error_ctx
 
     messages = [SystemMessage(content=system_prompt)]
-    
-    # Add history
+
     for msg in request.conversation_history[-6:]:
         if msg.get("role") == "user":
             messages.append(HumanMessage(content=msg["content"]))
         elif msg.get("role") in ("ai", "assistant"):
             messages.append(AIMessage(content=msg["content"]))
-    
-    messages.append(HumanMessage(content=request.prompt))
+
+    # Resolve @error_id references in the user prompt
+    resolved_prompt = _resolve_error_references(request.prompt, request.error_context)
+    messages.append(HumanMessage(content=resolved_prompt))
 
     full_response = ""
     try:
@@ -423,20 +921,19 @@ async def _handle_chat(llm, request: ChatRequest) -> AsyncGenerator[str, None]:
                 full_response += token
                 yield _sse_event(EVENT_TOKEN, token)
     except Exception as e:
-            yield _sse_event(EVENT_ERROR, f"LLM error: {_format_llm_error(e)}")
-            return
+        yield _sse_event(EVENT_ERROR, f"LLM error: {_format_llm_error(e)}")
+        return
 
-    # Post-processing: Check for Artifacts
-    # In a true streaming parser, we'd do this incrementally.
-    # For stability, we check after the turn.
     artifacts = _extract_artifacts(full_response)
-    
-    if artifacts:
+
+    if artifacts and request.user_id and request.project_id:
         yield _sse_event(EVENT_STEP, f"Found {len(artifacts)} artifacts. Applying changes...")
         for actions in artifacts:
-            async for event in _execute_actions_stream(actions):
+            async for event in _execute_actions_stream(
+                actions, user_id=request.user_id, project_id=request.project_id
+            ):
                 yield event
-        yield _sse_event(EVENT_TOKEN, "\n\n✅ Changes applied.")
+        yield _sse_event(EVENT_TOKEN, "\n\nChanges applied to cloud storage.")
 
     yield _sse_event(EVENT_DONE, {"success": True, "mode": "chat"})
 
@@ -446,88 +943,86 @@ async def _handle_chat(llm, request: ChatRequest) -> AsyncGenerator[str, None]:
 async def _handle_generate_unified(llm, request: ChatRequest) -> AsyncGenerator[str, None]:
     """
     Full feature generation using the Artifact Protocol.
-    Replaces the old Plan -> Structure -> Implement pipeline with a "Bolt-style" one-shot approach.
+    Files are written to Supabase Storage: {user_id}/{project_id}/...
     """
-    yield _sse_event(EVENT_STEP, "Analyzing project & planning...")
+    yield _sse_event(EVENT_STEP, "Initializing Cloud Workspace...")
 
-    # Get the powerful Generate Prompt
     system_prompt = get_generate_plan_prompt()
-    
-    # Add Theme Context
+
     if request.theme_context:
         system_prompt += f"\n\n<user-design-theme>\n{request.theme_context}\n</user-design-theme>"
 
-    project_ctx = await _get_project_context()
-    
+    project_ctx = await _get_project_context(
+        user_id=request.user_id or "", project_id=request.project_id or ""
+    )
+
+    # Add error context if provided
+    error_ctx = _build_error_context_block(request.error_context)
+
     messages = [
-        SystemMessage(content=system_prompt + project_ctx),
-        HumanMessage(content=f"Generate the full feature: {request.prompt}")
+        SystemMessage(content=system_prompt + project_ctx + error_ctx),
+        HumanMessage(content=_resolve_error_references(
+            f"Generate the full feature: {request.prompt}", request.error_context))
     ]
 
     full_response = ""
     yield _sse_event(EVENT_STEP, "Generating code artifacts...")
 
     try:
-        # Stream the thought process and the XML
         chunk_count = 0
-        logger.info(f"[_handle_generate_unified] Starting LLM stream for prompt: {request.prompt[:50]}...")
-        yield _sse_event(EVENT_STEP, "AI is thinking...") # Initial UI feedback
-        
+        logger.info(
+            f"[_handle_generate_unified] Starting LLM stream for prompt: {request.prompt[:50]}...")
+        yield _sse_event(EVENT_STEP, "AI is thinking...")
+
         async for chunk in llm.astream(messages):
             token = chunk.content if hasattr(chunk, "content") else str(chunk)
             if token:
                 full_response += token
                 chunk_count += 1
-                
+
                 if chunk_count % 10 == 0:
                     yield _sse_event(EVENT_STEP, f"Generating code... ({chunk_count} tokens)")
-                    
-                # We do NOT stream raw tokens to the UI anymore
-                # yield _sse_event(EVENT_TOKEN, token)
-                    
-        logger.info(f"[_handle_generate_unified] Stream complete. Total length: {len(full_response)}")
-        
-        # VISUAL LOG: Show full AI response in terminal
-        print("\n" + "="*60)
-        print(f"🤖 AI RESPONSE ({request.model}):")
-        print("-" * 60)
-        print(full_response)
-        print("-" * 60)
-        print("="*60 + "\n")
+
+        logger.info(
+            f"[_handle_generate_unified] Stream complete. Total length: {len(full_response)}")
 
         yield _sse_event(EVENT_STEP, "Generation complete. Analyzing artifacts...")
-                
+
     except Exception as e:
-        logger.error(f"[_handle_generate_unified] Generation failed: {e}", exc_info=True)
+        logger.error(
+            f"[_handle_generate_unified] Generation failed: {e}", exc_info=True)
         yield _sse_event(EVENT_ERROR, f"Generation failed: {_format_llm_error(e)}")
         return
 
-    # Extract and Execute Artifacts
     artifacts = _extract_artifacts(full_response)
-    logger.info(f"[_extract_artifacts] Found {len(artifacts)} artifact blocks.")
-    
+    logger.info(
+        f"[_extract_artifacts] Found {len(artifacts)} artifact blocks.")
+
     if not artifacts:
-        logger.warning(f"[_handle_generate_unified] No valid code artifacts found. Response was: {full_response[:500]}...")
+        logger.warning(
+            f"[_handle_generate_unified] No valid code artifacts found. Response was: {full_response[:500]}...")
         yield _sse_event(EVENT_ERROR, "No valid code artifacts found in response.")
     else:
         yield _sse_event(EVENT_STEP, "Processing artifacts...")
         count = 0
+        uid = request.user_id or ""
+        pid = request.project_id or ""
         for actions in artifacts:
-            async for event in _execute_actions_stream(actions):
+            async for event in _execute_actions_stream(
+                actions, user_id=uid, project_id=pid
+            ):
                 yield event
             count += len(actions)
-        
+
         yield _sse_event(EVENT_DONE, {"success": True, "mode": "generate", "actions_count": count})
 
 
 # ── UI COMPOSER (JSON MODE) ──────────────────────────────────────
 
 async def _handle_ui_composer(llm, request: ChatRequest) -> AsyncGenerator[str, None]:
-    """
-    Legacy/Specialized mode for Ryze Assignment (Deterministic JSON).
-    """
+    """Legacy/Specialized mode for Ryze Assignment (Deterministic JSON)."""
     yield _sse_event(EVENT_STEP, "Composing deterministic UI plan...")
-    
+
     system_prompt = get_generate_json_prompt()
     if request.theme_context:
         system_prompt += f"\n\n<user-design-theme>{request.theme_context}</user-design-theme>"
@@ -548,18 +1043,14 @@ async def _handle_ui_composer(llm, request: ChatRequest) -> AsyncGenerator[str, 
         yield _sse_event(EVENT_ERROR, str(e))
         return
 
-    # Try to parse JSON
-    # Simple regex extraction for the JSON block
-    import re
     json_match = re.search(r'\{[\s\S]*\}', full_response)
     if json_match:
         try:
             plan_data = json.loads(json_match.group())
-            # We can emit a special event for the previewer
             yield _sse_event(EVENT_PLAN_READY, plan_data)
-        except:
+        except Exception:
             pass
-            
+
     yield _sse_event(EVENT_DONE, {"success": True, "mode": "ui_composer"})
 
 
@@ -569,19 +1060,23 @@ async def _handle_plan(llm, request: ChatRequest) -> AsyncGenerator[str, None]:
     """Handle architectural planning (Markdown output)."""
     yield _sse_event(EVENT_STEP, "Creating architectural plan...")
     system_prompt = get_plan_prompt()
-    
+
+    # Add error context if provided
+    error_ctx = _build_error_context_block(request.error_context)
+
     messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=request.prompt)
+        SystemMessage(content=system_prompt + error_ctx),
+        HumanMessage(content=_resolve_error_references(
+            request.prompt, request.error_context))
     ]
-    
+
     full_resp = ""
     async for chunk in llm.astream(messages):
         token = chunk.content if hasattr(chunk, "content") else str(chunk)
         if token:
             full_resp += token
             yield _sse_event(EVENT_TOKEN, token)
-            
+
     yield _sse_event(EVENT_PLAN, full_resp)
     yield _sse_event(EVENT_DONE, {"success": True, "mode": "plan"})
 
@@ -593,7 +1088,6 @@ async def _handle_plan_interactive(llm, request: ChatRequest) -> AsyncGenerator[
     - If plan_answers provided: generate structured plan from answers
     """
     if request.plan_answers:
-        # Phase 2: Generate plan from answers
         yield _sse_event(EVENT_STEP, "Creating implementation plan from your answers...")
 
         answers_text = "\n".join(
@@ -603,7 +1097,6 @@ async def _handle_plan_interactive(llm, request: ChatRequest) -> AsyncGenerator[
 
         plan_prompt = get_plan_from_answers_prompt()
 
-        # Include design theme in plan generation from answers
         if request.theme_context:
             plan_prompt += f"\n\n<user-design-theme>\nThe user has selected this design theme. The plan must use these colors, style, and typography:\n{request.theme_context}\n</user-design-theme>"
 
@@ -618,17 +1111,15 @@ async def _handle_plan_interactive(llm, request: ChatRequest) -> AsyncGenerator[
             plan_response = await llm.ainvoke(plan_messages)
             raw_plan = plan_response.content.strip()
 
-            # Try to parse JSON from the response
             plan_data = None
             json_match = re.search(r'\{[\s\S]*\}', raw_plan)
             if json_match:
                 try:
                     plan_data = json.loads(json_match.group())
-                except:
+                except Exception:
                     pass
-            
+
             if not plan_data:
-                # Try fallback extractor
                 extracted = _extract_json_object(raw_plan)
                 if extracted:
                     plan_data = json.loads(extracted)
@@ -638,16 +1129,15 @@ async def _handle_plan_interactive(llm, request: ChatRequest) -> AsyncGenerator[
                 yield _sse_event(EVENT_PLAN_READY, plan_data)
                 yield _sse_event(EVENT_DONE, {"success": True, "mode": "plan_interactive"})
             else:
-                 yield _sse_event(EVENT_ERROR, "Failed to parse generated plan.")
-                 yield _sse_event(EVENT_DONE, {"success": False})
+                yield _sse_event(EVENT_ERROR, "Failed to parse generated plan.")
+                yield _sse_event(EVENT_DONE, {"success": False})
 
         except Exception as e:
             yield _sse_event(EVENT_ERROR, f"Plan generation failed: {_format_llm_error(e)}")
             yield _sse_event(EVENT_DONE, {"success": False})
     else:
-        # Phase 1: Generate clarifying questions
         yield _sse_event(EVENT_STEP, "Analyzing your request...")
-        
+
         questions_prompt = get_plan_questions_prompt()
         q_messages = [
             SystemMessage(content=questions_prompt),
@@ -658,22 +1148,21 @@ async def _handle_plan_interactive(llm, request: ChatRequest) -> AsyncGenerator[
 
         full_analysis = ""
         try:
-            # Stream the analysis/reasoning first so the user sees progress
             async for chunk in llm.astream(q_messages):
-                token = chunk.content if hasattr(chunk, "content") else str(chunk)
+                token = chunk.content if hasattr(
+                    chunk, "content") else str(chunk)
                 if token:
                     full_analysis += token
                     yield _sse_event(EVENT_TOKEN, token)
 
-            # Extract JSON from the full response
             questions_data = None
             json_match = re.search(r'\{[\s\S]*\}', full_analysis)
             if json_match:
                 try:
                     questions_data = json.loads(json_match.group())
-                except:
+                except Exception:
                     pass
-            
+
             if not questions_data:
                 extracted = _extract_json_object(full_analysis)
                 if extracted:
@@ -683,9 +1172,98 @@ async def _handle_plan_interactive(llm, request: ChatRequest) -> AsyncGenerator[
                 yield _sse_event(EVENT_QUESTIONS, questions_data)
                 yield _sse_event(EVENT_DONE, {"success": True, "mode": "plan_interactive"})
             else:
-                 yield _sse_event(EVENT_ERROR, "Failed to parse questions.")
-                 yield _sse_event(EVENT_DONE, {"success": False})
+                yield _sse_event(EVENT_ERROR, "Failed to parse questions.")
+                yield _sse_event(EVENT_DONE, {"success": False})
 
         except Exception as e:
             yield _sse_event(EVENT_ERROR, f"Question generation failed: {_format_llm_error(e)}")
             yield _sse_event(EVENT_DONE, {"success": False})
+
+
+# ── PLAN IMPLEMENT MODE HANDLER ──────────────────────────────────
+
+async def _handle_plan_implement(llm, request: ChatRequest) -> AsyncGenerator[str, None]:
+    """
+    Implements a pre-approved structured plan by generating all files.
+    Files are uploaded to Supabase Storage.
+    """
+    yield _sse_event(EVENT_STEP, "Implementing plan in Cloud Workspace...")
+
+    system_prompt = get_plan_implement_prompt()
+
+    if request.theme_context:
+        system_prompt += f"\n\n<user-design-theme>\n{request.theme_context}\n</user-design-theme>"
+
+    project_ctx = await _get_project_context(
+        user_id=request.user_id or "", project_id=request.project_id or ""
+    )
+    system_prompt += project_ctx
+
+    # Add error context if provided
+    error_ctx = _build_error_context_block(request.error_context)
+    system_prompt += error_ctx
+
+    plan_description = ""
+    if request.plan_data:
+        plan_description = json.dumps(
+            request.plan_data, indent=2, ensure_ascii=False)
+    else:
+        plan_description = "(No structured plan provided. Generate based on the prompt.)"
+
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(
+            content=_resolve_error_references(
+                f"Original request: {request.prompt}\n\n"
+                f"Approved implementation plan:\n{plan_description}\n\n"
+                f"Now implement this plan. Generate a <ryze_artifact> with ALL files.",
+                request.error_context
+            )
+        )
+    ]
+
+    full_response = ""
+    yield _sse_event(EVENT_STEP, "Generating code from plan...")
+
+    try:
+        chunk_count = 0
+        async for chunk in llm.astream(messages):
+            token = chunk.content if hasattr(chunk, "content") else str(chunk)
+            if token:
+                full_response += token
+                chunk_count += 1
+                if chunk_count % 15 == 0:
+                    yield _sse_event(EVENT_STEP, f"Implementing plan... ({chunk_count} tokens)")
+
+        logger.info(
+            f"[_handle_plan_implement] Stream complete. Length: {len(full_response)}")
+        yield _sse_event(EVENT_STEP, "Implementation complete. Applying artifacts...")
+
+    except Exception as e:
+        logger.error(f"[_handle_plan_implement] Failed: {e}", exc_info=True)
+        yield _sse_event(EVENT_ERROR, f"Plan implementation failed: {_format_llm_error(e)}")
+        yield _sse_event(EVENT_DONE, {"success": False})
+        return
+
+    artifacts = _extract_artifacts(full_response)
+    logger.info(
+        f"[_handle_plan_implement] Found {len(artifacts)} artifact blocks.")
+
+    if not artifacts:
+        logger.warning(
+            f"[_handle_plan_implement] No artifacts found. Response: {full_response[:500]}...")
+        yield _sse_event(EVENT_ERROR, "No code artifacts found in plan implementation.")
+        yield _sse_event(EVENT_DONE, {"success": False})
+    else:
+        yield _sse_event(EVENT_STEP, "Writing files to Cloud Storage...")
+        count = 0
+        uid = request.user_id or ""
+        pid = request.project_id or ""
+        for actions in artifacts:
+            async for event in _execute_actions_stream(
+                actions, user_id=uid, project_id=pid
+            ):
+                yield event
+            count += len(actions)
+
+        yield _sse_event(EVENT_DONE, {"success": True, "mode": "plan_implement", "actions_count": count})

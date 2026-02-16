@@ -3,6 +3,7 @@ AI Agent API endpoints for RyzeCanvas (Phase 4: LangGraph Orchestration).
 Provides endpoints for UI generation using RAG + State Graph with validation loop.
 """
 from typing import Optional, Dict, Any
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -63,14 +64,14 @@ class GenerateUIResponse(BaseModel):
 
 class SavePlanRequest(BaseModel):
     """Request schema for saving a generated plan to a project."""
-    project_id: int = Field(..., description="ID of the project to update")
+    project_id: UUID = Field(..., description="UUID of the project to update")
     code_json: Dict[str, Any] = Field(...,
                                       description="The generated UI plan to save")
 
     class Config:
         json_schema_extra = {
             "example": {
-                "project_id": 1,
+                "project_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
                 "code_json": {
                     "components": [],
                     "layout": {"theme": "light"}
@@ -82,7 +83,7 @@ class SavePlanRequest(BaseModel):
 class SavePlanResponse(BaseModel):
     """Response schema for save operation."""
     success: bool
-    project_id: int
+    project_id: UUID
     message: str
     updated_at: datetime
 
@@ -223,7 +224,7 @@ async def save_plan(
             return SavePlanResponse(
                 success=True,
                 project_id=project.id,
-                message=f"UI plan saved to project '{project.title}' successfully",
+                message=f"UI plan saved to project '{project.name}' successfully",
                 updated_at=project.updated_at
             )
         else:
@@ -235,23 +236,24 @@ async def save_plan(
                 .eq("id", request.project_id) \
                 .eq("user_id", current_user.id) \
                 .execute()
-            
+
             if not response.data:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Project not found or you don't have permission to update it"
                 )
-            
+
             # Update project
             code_json_str = json.dumps(request.code_json)
             update_resp = supabase.table("projects") \
                 .update({"code_json": code_json_str, "updated_at": datetime.utcnow().isoformat()}) \
                 .eq("id", request.project_id) \
                 .execute()
-                
+
             if not update_resp.data:
-                raise HTTPException(status_code=500, detail="Failed to update project in Supabase")
-                
+                raise HTTPException(
+                    status_code=500, detail="Failed to update project in Supabase")
+
             updated_project = update_resp.data[0]
             return SavePlanResponse(
                 success=True,
@@ -275,7 +277,7 @@ async def save_plan(
 @router.post("/generate-and-save", response_model=SavePlanResponse)
 async def generate_and_save(
     prompt: str = Query(..., description="UI description"),
-    project_id: int = Query(..., description="Project ID to save to"),
+    project_id: UUID = Query(..., description="Project UUID to save to"),
     context: Optional[Dict[str, Any]] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -294,7 +296,7 @@ async def generate_and_save(
 
     **Example:**
     ```
-    POST /agent/generate-and-save?prompt=Create a login screen&project_id=1
+    POST /agent/generate-and-save?prompt=Create a login screen&project_id=a1b2c3d4-...
     ```
     """
     try:

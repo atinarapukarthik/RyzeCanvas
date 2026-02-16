@@ -7,7 +7,10 @@ import { Input } from "@/components/ui/input";
 import { CodeComparison } from "@/components/ui/code-comparison";
 import { PromptBox } from "@/components/ui/prompt-box";
 import { DynamicRenderer } from "@/components/DynamicRenderer";
+import { TerminalPanel } from "@/components/TerminalPanel";
 import { useUIStore } from "@/stores/uiStore";
+import { useTerminalStore } from "@/stores/terminalStore";
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { createProject, searchWeb, updateProject, streamChat, fetchProjects } from "@/lib/api";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -103,22 +106,63 @@ interface ImplementationStatus {
  * so cross-file references (e.g. HeroSection imported in App.tsx) resolve at runtime.
  */
 function buildPreviewHtml(code: string, allFiles?: Record<string, string>): string {
+    // ── Multi-file Detection & Parsing ──
+    let files = allFiles || {};
+
+    // If no structured files are provided but the code looks like a multi-file dump (comments like // filename)
+    // parse it into individual files.
+    if (Object.keys(files).length === 0 && (code.match(/(?:^|\n)\/\/\s+[\w\-\/]+\.(?:tsx|ts|jsx|js|css|json)/) || code.includes('// tsconfig.json'))) {
+        const parsedFiles: Record<string, string> = {};
+        const lines = code.split('\n');
+        let currentFile = '';
+        let currentContent: string[] = [];
+
+        for (const line of lines) {
+            const match = line.match(/^(?:\/\/|###)\s+([a-zA-Z0-9_\-\/]+\.(?:tsx|ts|jsx|js|css|json|html|md))$/);
+            if (match) {
+                if (currentFile) {
+                    parsedFiles[currentFile] = currentContent.join('\n').trim();
+                }
+                currentFile = match[1].trim();
+                currentContent = [];
+            } else {
+                if (currentFile || line.trim()) { // Skip leading garbage
+                    currentContent.push(line);
+                }
+            }
+        }
+        if (currentFile) {
+            parsedFiles[currentFile] = currentContent.join('\n').trim();
+        }
+
+        if (Object.keys(parsedFiles).length > 0) {
+            files = parsedFiles;
+        }
+    }
+
     // ── Multi-file merge ──
     // When the AI generates a multi-file project, App.tsx may reference HeroSection, Footer,
     // Navbar, etc. from separate files. We inline them all into a single preview.
     let mergedCode = code;
 
-    if (allFiles && Object.keys(allFiles).length > 0) {
+    if (files && Object.keys(files).length > 0) {
         const componentFiles: { path: string; code: string }[] = [];
-        const mainFilePaths = ['src/App.tsx', 'src/App.jsx', 'app/page.tsx', 'app/page.jsx'];
+        const mainFilePaths = [
+            'src/App.tsx', 'src/App.jsx',
+            'app/page.tsx', 'app/page.jsx',
+            'src/pages/index.tsx', 'src/pages/index.jsx',
+            'pages/index.tsx', 'pages/index.jsx'
+        ];
 
-        for (const [filePath, fileCode] of Object.entries(allFiles)) {
+        for (const [filePath, fileCode] of Object.entries(files)) {
             if (
                 (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) &&
                 !mainFilePaths.includes(filePath) &&
                 !filePath.includes('main.tsx') &&
                 !filePath.includes('main.jsx') &&
                 !filePath.includes('layout.tsx') &&
+                !filePath.includes('_document.tsx') &&
+                !filePath.includes('_app.tsx') && // Don't inline _app.tsx directly, it's special
                 typeof fileCode === 'string' &&
                 (fileCode.includes('function ') || fileCode.includes('const ') || fileCode.includes('export'))
             ) {
@@ -126,11 +170,17 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
             }
         }
 
+        // Determine the entry point
         const mainFile =
-            allFiles['src/App.tsx'] ||
-            allFiles['src/App.jsx'] ||
-            allFiles['app/page.tsx'] ||
-            allFiles['app/page.jsx'] ||
+            files['src/App.tsx'] ||
+            files['src/App.jsx'] ||
+            files['app/page.tsx'] ||
+            files['app/page.jsx'] ||
+            files['src/pages/index.tsx'] ||
+            files['src/pages/index.jsx'] ||
+            files['pages/index.tsx'] ||
+            files['pages/index.jsx'] ||
+            Object.values(files).find(v => v.includes('export default function App') || v.includes('export default function Home')) ||
             code;
 
         if (componentFiles.length > 0) {
@@ -140,6 +190,27 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         } else {
             mergedCode = mainFile;
         }
+    }
+
+    // Detect if the code is likely JSON (e.g. tsconfig.json, package.json)
+    // Only if it's NOT just the start of a multi-file bundle we just parsed
+    // And if it doesn't look like React code
+    const strippedForCheck = mergedCode.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, '').trim();
+    if (
+        (strippedForCheck.startsWith('{') || strippedForCheck.startsWith('[')) &&
+        !mergedCode.includes('import React') &&
+        !mergedCode.includes('export default') &&
+        !mergedCode.includes('className=')
+    ) {
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>body { background: #1e1e1e; color: #d4d4d4; font-family: monospace; padding: 20px; white-space: pre-wrap; }</style>
+</head>
+<body>${mergedCode}</body>
+</html>`;
     }
 
     // Extract the component name from the LAST default export (the main App)
@@ -184,23 +255,23 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
     }
 
     const codeWithoutImports = mergedCode
-        // Remove all import statements (single-line and multi-line)
-        .replace(/^import[\s\S]*?from\s*['"][^'"]*['"];?\s*$/gm, '')
-        .replace(/^import\s*['"][^'"]*['"];?\s*$/gm, '')
+        // Remove all import statements (single-line and multi-line) - allow leading whitespace
+        .replace(/^\s*import[\s\S]*?from\s*['"][^'"]*['"];?\s*$/gm, '')
+        .replace(/^\s*import\s*['"][^'"]*['"];?\s*$/gm, '')
         // Handle default exports:
         // 1. `export default function Foo` → `function Foo` (keep the declaration)
-        .replace(/^export\s+default\s+function\s+/gm, 'function ')
+        .replace(/^\s*export\s+default\s+function\s+/gm, 'function ')
         // 2. `export default Foo;` (standalone name reference) → remove entirely
         //    The component is already defined above by its function/const declaration.
-        .replace(/^export\s+default\s+[A-Z]\w*\s*;?\s*$/gm, '')
+        .replace(/^\s*export\s+default\s+[A-Z]\w*\s*;?\s*$/gm, '')
         // 3. `export default <expression>` (arrow fn, class expr, etc.) → assign to a var
-        .replace(/^export\s+default\s+/gm, 'const __DefaultExport__ = ')
+        .replace(/^\s*export\s+default\s+/gm, 'const __DefaultExport__ = ')
         // Remove export keyword from named exports (keep the declaration)
-        .replace(/^export\s+(function|const|let|var|class)\s+/gm, '$1 ')
+        .replace(/^\s*export\s+(function|const|let|var|class)\s+/gm, '$1 ')
         // ── TypeScript pre-stripping (safety net before Babel) ──
         // Remove `type X = ...` and `interface X { ... }` declarations entirely
-        .replace(/^(?:export\s+)?type\s+\w+(?:<[^>]*>)?\s*=\s*[^;]*;?\s*$/gm, '')
-        .replace(/^(?:export\s+)?interface\s+\w+(?:\s+extends\s+\w+)?(?:<[^>]*>)?\s*\{[^}]*\}\s*$/gm, '')
+        .replace(/^\s*(?:export\s+)?type\s+\w+(?:<[^>]*>)?\s*=\s*[^;]*;?\s*$/gm, '')
+        .replace(/^\s*(?:export\s+)?interface\s+\w+(?:\s+extends\s+\w+)?(?:<[^>]*>)?\s*\{[^}]*\}\s*$/gm, '')
         // Remove type annotations from variable declarations: `const x: Type = ...` → `const x = ...`
         .replace(/(?<=[(\s,])(\w+)\s*:\s*(?:string|number|boolean|any|void|null|undefined|never|unknown|object|React\.\w+|Array<[^>]*>|Record<[^>]*>|\w+(?:\[\])?)\s*(?=[=,)\n])/g, '$1 ')
         // Remove generic type parameters from function calls: fn<Type>(...) → fn(...)
@@ -208,7 +279,7 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         // Remove `as Type` type assertions
         .replace(/\s+as\s+(?:const|string|number|boolean|any|unknown|\w+(?:\[\])?)\b/g, '')
         // Remove standalone `type` imports that might have been partially stripped
-        .replace(/^import\s+type\b[^;]*;?\s*$/gm, '');
+        .replace(/^\s*import\s+type\b[^;]*;?\s*$/gm, '');
 
     // Scan user code for declared names to avoid duplicate identifier errors with icon stubs
     const declaredNames = new Set<string>();
@@ -340,9 +411,13 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
 </head>
 <body>
     <div id="root"></div>
-    <script type="text/babel" data-type="module" data-presets="react,typescript">
+    <script type="text/babel" data-type="module" data-presets="env,react,typescript">
         const { useState, useEffect, useRef, useMemo, useCallback, useContext, createContext,
                 useReducer, useId, Fragment, forwardRef, memo, Suspense } = React;
+
+        // Prevent "exports is not defined" errors for CommonJS code
+        var exports = {};
+        var module = { exports: exports };
 
         // Map CDN globals to local scope
         const clsx = window.clsx;
@@ -369,6 +444,8 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         
         // Auto-generated stubs for missing imports
         ${importStubs}
+
+
 
         // Catch-all stubs for missing icon/Icon variables often used in AI code maps
         if (typeof icon === 'undefined') {
@@ -410,8 +487,23 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         ${codeWithoutImports}
 
         const AppComponent = typeof __DefaultExport__ !== 'undefined' ? __DefaultExport__ : ${componentName};
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(React.createElement(AppComponent));
+        const container = document.getElementById('root');
+        
+        // Robust mounting that supports both React 18 and legacy versions
+        try {
+            if (ReactDOM.createRoot) {
+                const root = ReactDOM.createRoot(container);
+                root.render(React.createElement(AppComponent));
+            } else {
+                ReactDOM.render(React.createElement(AppComponent), container);
+            }
+        } catch (err) {
+            console.error('Mount error:', err);
+            // Fallback for very old React versions or edge cases
+            if (container) {
+                container.innerHTML = '<div style="color:red;padding:20px">Failed to mount application. See console for details.</div>';
+            }
+        }
     </script>
 
 </body>
@@ -570,6 +662,7 @@ function FileTreeView({ files, activeFile, onSelect, depth = 0 }: {
 
 function StudioContent() {
     const { githubConnected, setGithubConnected, selectedModel, githubModal, setGithubModal, designTheme } = useUIStore();
+    const terminalStore = useTerminalStore();
     const router = useRouter();
     const searchParams = useSearchParams();
 
@@ -622,7 +715,7 @@ function StudioContent() {
     const [routeSearchOpen, setRouteSearchOpen] = useState(false);
     const [routeSearchQuery, setRouteSearchQuery] = useState('');
     const [iframeKey, setIframeKey] = useState(0);
-    const [previewError, setPreviewError] = useState<{ message: string; stack?: string } | null>(null);
+    const [previewError, setPreviewError] = useState<{ message: string; stack?: string; source?: string; line?: number; column?: number } | null>(null);
     const [errorModalOpen, setErrorModalOpen] = useState(false);
     const [archivesModalOpen, setArchivesModalOpen] = useState(false);
     const [archivedChats, setArchivedChats] = useState<ArchivedChat[]>([]);
@@ -998,6 +1091,24 @@ function StudioContent() {
             if (event.data?.type === 'preview-error') {
                 const error = event.data.error;
                 setPreviewError(error);
+
+                // Build a clear, detailed error message for the terminal
+                const locationInfo = [
+                    error.source ? `File: ${error.source}` : null,
+                    error.line ? `Line: ${error.line}` : null,
+                    error.column ? `Col: ${error.column}` : null,
+                ].filter(Boolean).join(' | ');
+
+                const errorMessage = locationInfo
+                    ? `Preview Error: ${error.message} (${locationInfo})`
+                    : `Preview Error: ${error.message}`;
+
+                const errorDetail = [
+                    error.stack || null,
+                    locationInfo ? `\nLocation: ${locationInfo}` : null,
+                ].filter(Boolean).join('\n');
+
+                terminalStore.addEntry('error', errorMessage, errorDetail || undefined);
             }
             if (event.data?.type === 'preview-navigation') {
                 const path = event.data.path; // e.g., "/about" or "/"
@@ -1164,10 +1275,25 @@ function StudioContent() {
                 ? JSON.stringify(allGeneratedFiles)
                 : undefined);
 
-            // CRITICAL: If there is a runtime error visible in the preview, 
+            // CRITICAL: If there is a runtime error visible in the preview,
             // ALERT the AI about it so it can fix it.
             if (previewError) {
-                const errorAlert = `\n\n<active_runtime_error>\nThe user's application is currently crashing with this error:\n${JSON.stringify(previewError, null, 2)}\n\nFix this error in your next response.\n</active_runtime_error>`;
+                // Include recent terminal errors for added context
+                const recentErrors = terminalStore.getLatestErrors();
+                const terminalContext = recentErrors.length > 0
+                    ? `\nRecent terminal errors:\n${recentErrors.map((e) => `- ${e.message}${e.detail ? `\n  ${e.detail}` : ''}`).join('\n')}`
+                    : '';
+
+                const errorAlert = `\n\n<active_runtime_error>
+The user's application is currently crashing with this error:
+Error: ${previewError.message}
+${previewError.source ? `Source: ${previewError.source}` : ''}
+${previewError.line ? `Line: ${previewError.line}${previewError.column ? `, Column: ${previewError.column}` : ''}` : ''}
+${previewError.stack ? `Stack: ${previewError.stack}` : ''}
+${terminalContext}
+
+Fix this error in your next response.
+</active_runtime_error>`;
                 if (existingCodeContext) {
                     existingCodeContext += errorAlert;
                 } else {
@@ -1193,6 +1319,35 @@ function StudioContent() {
 
                 onStep: (step) => {
                     setThinkingSteps((s) => [...s, step]);
+                    // Detect phase transitions from backend: "[Phase Label]" pattern
+                    const phaseMatch = step.match(/^\[(.+)\]$/);
+                    if (phaseMatch) {
+                        const phaseLabel = phaseMatch[1].toLowerCase();
+                        // Map label back to phase key
+                        const phaseMap: Record<string, string> = {
+                            'setting up dependencies': 'dependencies',
+                            'writing config files': 'config',
+                            'creating entry points': 'entry',
+                            'building app shell': 'app',
+                            'writing source files': 'source',
+                            'installing packages': 'install',
+                            'starting dev server': 'devserver',
+                            'building project': 'build',
+                            'running linter': 'lint',
+                            'running tests': 'test',
+                            'executing command': 'shell',
+                            'all actions completed': 'complete',
+                        };
+                        const phase = phaseMap[phaseLabel] as any;
+                        if (phase) {
+                            terminalStore.setPhase(phase);
+                            terminalStore.addEntry('phase', step, undefined, phase);
+                        } else {
+                            terminalStore.addEntry('info', step);
+                        }
+                    } else {
+                        terminalStore.addEntry('info', step);
+                    }
                 },
 
                 onToken: (token) => {
@@ -1260,6 +1415,9 @@ function StudioContent() {
 
                 onInstall: (statuses) => {
                     setImplementationStatus((prev) => prev ? { ...prev, installingLibraries: statuses, phase: 'installing' } : null);
+                    statuses.forEach((s: { name: string; status: string; phase?: string }) => {
+                        terminalStore.addEntry('install', `${s.name} ${s.status}`, undefined, (s.phase as any) || 'install');
+                    });
                 },
 
                 onFileUpdate: (statuses) => {
@@ -1282,6 +1440,9 @@ function StudioContent() {
                         setIframeKey((k) => k + 1);
                         setActiveTab('preview');
                     }
+                    statuses.forEach((s: FileUpdateStatus & { phase?: string }) => {
+                        terminalStore.addEntry('file', `${s.path} [${s.status}]`, undefined, (s.phase as any) || undefined);
+                    });
                 },
 
                 onTodo: (todos) => {
@@ -1298,6 +1459,14 @@ function StudioContent() {
                     // Display command execution result in the thinking steps
                     const commandOutput = `$ ${result.command}\n${result.formatted || result.stdout || result.error || ''}`;
                     setThinkingSteps((s) => [...s, commandOutput]);
+
+                    // Log to terminal with phase from backend
+                    terminalStore.addEntry(
+                        'command',
+                        `$ ${result.command}`,
+                        result.formatted || result.stdout || result.error || '',
+                        (result.phase as any) || undefined
+                    );
 
                     // Also append to the streaming message for visibility
                     if (result.formatted) {
@@ -1367,10 +1536,12 @@ function StudioContent() {
 
                 onError: (error) => {
                     toast.error("AI Error", { description: error });
+                    terminalStore.addEntry('error', error);
                 },
 
                 onDone: (meta) => {
                     if (orchestrationMode === 'generate' && meta?.success) {
+                        terminalStore.addEntry('success', 'Generation complete', undefined, 'complete');
                         const retries = meta.retries || 0;
                         let suffix = `\n\nGenerated production-ready code using **${selectedModel.name}**`;
                         if (retries > 0) suffix += ` (fixed after ${retries} retries)`;
@@ -1434,6 +1605,13 @@ function StudioContent() {
                             }).then((project) => {
                                 migrateSessionToProject(project.id);
                                 setProjectId(project.id);
+                                // Update URL so refresh/navigation preserves project context
+                                const params = new URLSearchParams(searchParams.toString());
+                                params.set('project', project.id);
+                                // Remove prompt/mode params to clean up URL
+                                params.delete('prompt');
+                                params.delete('mode');
+                                router.replace(`/studio?${params.toString()}`, { scroll: false });
                             }).catch(() => { });
                         }
                     }
@@ -1535,6 +1713,34 @@ function StudioContent() {
 
                 onStep: (step) => {
                     setThinkingSteps((s) => [...s, step]);
+                    // Detect phase transitions from backend
+                    const phaseMatch = step.match(/^\[(.+)\]$/);
+                    if (phaseMatch) {
+                        const phaseLabel = phaseMatch[1].toLowerCase();
+                        const phaseMap: Record<string, string> = {
+                            'setting up dependencies': 'dependencies',
+                            'writing config files': 'config',
+                            'creating entry points': 'entry',
+                            'building app shell': 'app',
+                            'writing source files': 'source',
+                            'installing packages': 'install',
+                            'starting dev server': 'devserver',
+                            'building project': 'build',
+                            'running linter': 'lint',
+                            'running tests': 'test',
+                            'executing command': 'shell',
+                            'all actions completed': 'complete',
+                        };
+                        const phase = phaseMap[phaseLabel] as any;
+                        if (phase) {
+                            terminalStore.setPhase(phase);
+                            terminalStore.addEntry('phase', step, undefined, phase);
+                        } else {
+                            terminalStore.addEntry('info', step);
+                        }
+                    } else {
+                        terminalStore.addEntry('info', step);
+                    }
                 },
 
                 onToken: (token) => {
@@ -1572,6 +1778,7 @@ function StudioContent() {
                 onCommand: (result) => {
                     const commandOutput = `$ ${result.command}\n${result.formatted || result.stdout || result.error || ''}`;
                     setThinkingSteps((s) => [...s, commandOutput]);
+                    terminalStore.addEntry('command', `$ ${result.command}`, result.formatted || result.stdout || result.error || '', (result.phase as any) || undefined);
                 },
 
                 onLogAnalysis: (analysis) => {
@@ -1591,6 +1798,7 @@ function StudioContent() {
 
                 onError: (error) => {
                     toast.error("AI Error", { description: error });
+                    terminalStore.addEntry('error', error);
                 },
 
                 onDone: () => { },
@@ -1668,10 +1876,41 @@ function StudioContent() {
 
                 onStep: (step) => {
                     setThinkingSteps((s) => [...s, step]);
+                    // Detect phase transitions from backend
+                    const phaseMatch = step.match(/^\[(.+)\]$/);
+                    if (phaseMatch) {
+                        const phaseLabel = phaseMatch[1].toLowerCase();
+                        const phaseMap: Record<string, string> = {
+                            'setting up dependencies': 'dependencies',
+                            'writing config files': 'config',
+                            'creating entry points': 'entry',
+                            'building app shell': 'app',
+                            'writing source files': 'source',
+                            'installing packages': 'install',
+                            'starting dev server': 'devserver',
+                            'building project': 'build',
+                            'running linter': 'lint',
+                            'running tests': 'test',
+                            'executing command': 'shell',
+                            'all actions completed': 'complete',
+                        };
+                        const phase = phaseMap[phaseLabel] as any;
+                        if (phase) {
+                            terminalStore.setPhase(phase);
+                            terminalStore.addEntry('phase', step, undefined, phase);
+                        } else {
+                            terminalStore.addEntry('info', step);
+                        }
+                    } else {
+                        terminalStore.addEntry('info', step);
+                    }
                 },
 
                 onInstall: (statuses) => {
                     setImplementationStatus((prev) => prev ? { ...prev, installingLibraries: statuses, phase: 'installing' } : null);
+                    statuses.forEach((s: { name: string; status: string; phase?: string }) => {
+                        terminalStore.addEntry('install', `${s.name} ${s.status}`, undefined, (s.phase as any) || 'install');
+                    });
                 },
 
                 onFileUpdate: (statuses) => {
@@ -1685,6 +1924,9 @@ function StudioContent() {
                         setCurrentPreviewFile(latestFile.code);
                         setActiveTab('preview');
                     }
+                    statuses.forEach((s: FileUpdateStatus & { phase?: string }) => {
+                        terminalStore.addEntry('file', `${s.path} [${s.status}]`, undefined, (s.phase as any) || undefined);
+                    });
                 },
 
                 onTodo: (todos) => {
@@ -1700,6 +1942,7 @@ function StudioContent() {
                 onCommand: (result) => {
                     const commandOutput = `$ ${result.command}\n${result.formatted || result.stdout || result.error || ''}`;
                     setThinkingSteps((s) => [...s, commandOutput]);
+                    terminalStore.addEntry('command', `$ ${result.command}`, result.formatted || result.stdout || result.error || '', (result.phase as any) || undefined);
                 },
 
                 onLogAnalysis: (analysis) => {
@@ -1733,6 +1976,7 @@ function StudioContent() {
 
                 onError: (error) => {
                     toast.error("Implementation Error", { description: error });
+                    terminalStore.addEntry('error', error);
                 },
 
                 onDone: (meta) => {
@@ -1740,6 +1984,7 @@ function StudioContent() {
                     setImplementationStatus((prev) => prev ? { ...prev, phase: 'done' } : null);
 
                     if (meta?.success) {
+                        terminalStore.addEntry('success', 'Implementation complete', undefined, 'complete');
                         // Store all generated files
                         const allFiles: Record<string, string> = meta.all_files || {};
                         if (Object.keys(allFiles).length > 0) {
@@ -1867,18 +2112,28 @@ function StudioContent() {
 
         setErrorModalOpen(false);
 
-        // Generic fix prompt for ANY error
+        // Gather all recent error entries from terminal for full context
+        const recentErrors = terminalStore.getLatestErrors();
+        const terminalErrorContext = recentErrors.length > 0
+            ? recentErrors.map((e) => `- ${e.message}${e.detail ? `\n  Detail: ${e.detail}` : ''}`).join('\n')
+            : '';
+
+        // Build a detailed fix prompt with all available error info
         const fixPrompt = `CRITICAL: The application is crashing with the following error.
 
 Error: ${previewError.message}
+${previewError.source ? `Source File: ${previewError.source}` : ''}
+${previewError.line ? `Line: ${previewError.line}${previewError.column ? `, Column: ${previewError.column}` : ''}` : ''}
 
 Stack Trace:
 ${previewError.stack || 'No stack trace available'}
+${terminalErrorContext ? `\nRecent Terminal Errors:\n${terminalErrorContext}` : ''}
 
-Please analyze the error and FIX the code. 
+Please analyze the error and FIX the code.
 - If a component is missing, define it.
 - If an import is wrong, fix it.
 - If there is a logic error, correct it.
+- Pay attention to the file and line number to locate the exact issue.
 
 Return the corrected code.`;
 
@@ -1887,6 +2142,16 @@ Return the corrected code.`;
             handleSendRef.current(fixPrompt);
         }
     };
+
+    // Register the fix-error callback with the terminal store so the @ button works
+    // Use a ref to avoid re-renders — handleFixError changes every render due to previewError dep
+    const handleFixErrorRef = useRef(handleFixError);
+    handleFixErrorRef.current = handleFixError;
+    useEffect(() => {
+        const cb = () => handleFixErrorRef.current();
+        terminalStore.setOnFixError(cb);
+        return () => terminalStore.setOnFixError(null);
+    }, []);
 
     return (
         <div className="flex flex-col h-full bg-background overflow-hidden font-sans">
@@ -2752,19 +3017,19 @@ Return the corrected code.`;
                             </Button>
                             <div className="h-4 w-px bg-border mx-1" />
 
-                            {/* NEW: Send Logs Button */}
+                            {/* Terminal Toggle */}
                             <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                                onClick={() => {
-                                    // Capture basic console logs if possible or just trigger an analysis request
-                                    handleSend('Please analyze the browser console logs and fix any errors you see.', 'chat');
-                                }}
-                                title="Ask AI to check logs"
+                                className={`h-8 gap-1.5 text-xs ${terminalStore.open ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground'}`}
+                                onClick={() => terminalStore.toggle()}
+                                title="Toggle terminal"
                             >
                                 <Terminal className="h-3.5 w-3.5" />
-                                <span className="hidden sm:inline">Debug</span>
+                                <span className="hidden sm:inline">Terminal</span>
+                                {terminalStore.entries.filter(e => e.level === 'error').length > 0 && (
+                                    <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+                                )}
                             </Button>
 
                             <Button variant="ghost" size="icon" className="h-8 w-8 rounded-md" onClick={handleDownload} title="Download code"><Download className="h-4 w-4" /></Button>
@@ -2792,150 +3057,164 @@ Return the corrected code.`;
                         </div>
                     </div>
 
-                    {/* Content */}
-                    <div className="flex-1 p-6 overflow-auto bg-[url('/grid-pattern.svg')] bg-[size:40px_40px] bg-fixed">
-                        {activeTab === 'preview' && (
-                            <div className={`mx-auto h-full rounded-2xl overflow-hidden shadow-2xl transition-all duration-500 ${device === 'mobile' ? 'max-w-sm' : 'w-full'}`}>
-                                {uiPlan ? (
-                                    <div className="h-full overflow-hidden bg-white rounded-2xl flex flex-col shadow-sm border border-border/50 relative">
-                                        <div className="absolute top-2 right-2 z-10 px-2 py-1 bg-black/80 text-white text-[10px] rounded-full font-mono backdrop-blur-md">
-                                            Deterministic UI
-                                        </div>
-                                        <DynamicRenderer plan={uiPlan} />
-                                    </div>
-                                ) : (generatedCode || (previewRoute && allGeneratedFiles[previewRoute])) ? (
-                                    <div className="h-full overflow-hidden bg-white rounded-2xl flex flex-col">
-                                        {/* Subtle error banner — click to see details or fix */}
-                                        {previewError && (
-                                            <button
-                                                onClick={() => setErrorModalOpen(true)}
-                                                className="flex items-center gap-2 px-3 py-1.5 bg-destructive/10 border-b border-destructive/20 text-destructive text-xs font-medium hover:bg-destructive/15 transition-colors shrink-0 w-full text-left"
-                                            >
-                                                <AlertTriangle className="h-3 w-3 shrink-0" />
-                                                <span className="truncate">{previewError.message}</span>
-                                                <span className="ml-auto text-[10px] text-destructive/60 shrink-0">Click to fix</span>
-                                            </button>
-                                        )}
-                                        <iframe
-                                            key={iframeKey}
-                                            srcDoc={buildPreviewHtml(
-                                                previewRoute && allGeneratedFiles[previewRoute]
-                                                    ? allGeneratedFiles[previewRoute]
-                                                    : generatedCode,
-                                                allGeneratedFiles
-                                            )}
-                                            className="w-full flex-1 border-0 outline-none block"
-                                            sandbox="allow-scripts allow-same-origin"
-                                            title="Live Preview"
-                                        />
-                                    </div>
-                                ) : isImplementing && currentPreviewFile ? (
-                                    /* Live code preview during implementation */
-                                    <div className="h-full overflow-auto bg-[#0d1117] rounded-2xl p-4">
-                                        <pre className="text-[11px] font-mono text-green-400/90 leading-relaxed whitespace-pre-wrap">
-                                            <motion.span
-                                                initial={{ opacity: 0 }}
-                                                animate={{ opacity: 1 }}
-                                                key={currentPreviewFile.slice(0, 50)}
-                                            >
-                                                {currentPreviewFile}
-                                            </motion.span>
-                                        </pre>
-                                    </div>
-                                ) : (
-                                    <div className="h-full flex items-center justify-center animate-fade-in">
-                                        <div className="text-center group">
-                                            <div className="h-16 w-16 bg-primary/5 rounded-full flex items-center justify-center mx-auto mb-4 border border-primary/10 group-hover:scale-110 transition-transform duration-500">
-                                                <Play className="h-8 w-8 text-primary shadow-primary" />
+                    {/* Content + Terminal */}
+                    <ResizablePanelGroup direction="vertical" className="flex-1 min-h-0">
+                        <ResizablePanel defaultSize={terminalStore.open ? 70 : 100} minSize={30}>
+                            <div className="h-full p-6 overflow-auto bg-[url('/grid-pattern.svg')] bg-[size:40px_40px] bg-fixed">
+                                {activeTab === 'preview' && (
+                                    <div className={`mx-auto h-full rounded-2xl overflow-hidden shadow-2xl transition-all duration-500 ${device === 'mobile' ? 'max-w-sm' : 'w-full'}`}>
+                                        {uiPlan ? (
+                                            <div className="h-full overflow-hidden bg-white rounded-2xl flex flex-col shadow-sm border border-border/50 relative">
+                                                <div className="absolute top-2 right-2 z-10 px-2 py-1 bg-black/80 text-white text-[10px] rounded-full font-mono backdrop-blur-md">
+                                                    Deterministic UI
+                                                </div>
+                                                <DynamicRenderer plan={uiPlan} />
                                             </div>
-                                            <p className="text-sm font-semibold text-foreground">Awaiting Generation</p>
-                                            <p className="text-[11px] text-muted-foreground/60 mt-1 max-w-[220px]">Describe what you want to build and I&apos;ll generate production-ready React + Tailwind code with a live preview.</p>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                        {activeTab === 'code' && (
-                            <div className="glass-strong rounded-2xl overflow-hidden h-full flex shadow-2xl border-white/5">
-                                {/* File Tree Sidebar */}
-                                {(generatedCode || Object.keys(allGeneratedFiles).length > 0) && (
-                                    <div className="w-52 shrink-0 border-r border-white/5 bg-sidebar/60 overflow-y-auto py-2">
-                                        <div className="flex items-center gap-1.5 px-3 py-1.5 mb-1">
-                                            <FolderTree className="h-3.5 w-3.5 text-primary" />
-                                            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Explorer</span>
-                                        </div>
-                                        <FileTreeView
-                                            files={buildFileTree(generatedCode, Object.keys(allGeneratedFiles).length > 0 ? allGeneratedFiles : undefined)}
-                                            activeFile={activeFile}
-                                            onSelect={(file) => {
-                                                setActiveFile(file.path);
-                                                setViewingFileContent(file.content);
-                                            }}
-                                        />
-                                    </div>
-                                )}
-                                {/* Code Viewer */}
-                                <div className="flex-1 flex flex-col min-w-0">
-                                    <div className="flex items-center gap-2 px-4 h-10 border-b border-white/5 bg-sidebar/80 text-[11px] font-mono text-muted-foreground">
-                                        <FileCode className="h-3.5 w-3.5 text-primary" />
-                                        <span className="truncate">{activeFile.split('/').pop() || 'Component.tsx'}</span>
-                                        {isEditing && activeFile === 'src/components/Generated.tsx' && (
-                                            <span className="text-primary animate-pulse ml-auto flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-primary" /> LIVE EDITING</span>
-                                        )}
-                                    </div>
-                                    <div className="flex-1 overflow-auto bg-black/40">
-                                        {isEditing && activeFile === 'src/components/Generated.tsx' ? (
-                                            <textarea
-                                                value={editableCode}
-                                                onChange={(e) => setEditableCode(e.target.value)}
-                                                className="w-full h-full p-6 bg-transparent border-0 shadow-none focus:ring-0 font-mono text-sm text-[hsl(var(--neon-text))] resize-none leading-relaxed outline-none"
-                                            />
+                                        ) : (generatedCode || (previewRoute && allGeneratedFiles[previewRoute])) ? (
+                                            <div className="h-full overflow-hidden bg-white rounded-2xl flex flex-col">
+                                                {/* Subtle error banner — click to see details or fix */}
+                                                {previewError && (
+                                                    <button
+                                                        onClick={() => setErrorModalOpen(true)}
+                                                        className="flex items-center gap-2 px-3 py-1.5 bg-destructive/10 border-b border-destructive/20 text-destructive text-xs font-medium hover:bg-destructive/15 transition-colors shrink-0 w-full text-left"
+                                                    >
+                                                        <AlertTriangle className="h-3 w-3 shrink-0" />
+                                                        <span className="truncate">{previewError.message}</span>
+                                                        <span className="ml-auto text-[10px] text-destructive/60 shrink-0">Click to fix</span>
+                                                    </button>
+                                                )}
+                                                <iframe
+                                                    key={iframeKey}
+                                                    srcDoc={buildPreviewHtml(
+                                                        previewRoute && allGeneratedFiles[previewRoute]
+                                                            ? allGeneratedFiles[previewRoute]
+                                                            : generatedCode,
+                                                        allGeneratedFiles
+                                                    )}
+                                                    className="w-full flex-1 border-0 outline-none block"
+                                                    sandbox="allow-scripts allow-same-origin"
+                                                    title="Live Preview"
+                                                />
+                                            </div>
+                                        ) : isImplementing && currentPreviewFile ? (
+                                            /* Live code preview during implementation */
+                                            <div className="h-full overflow-auto bg-[#0d1117] rounded-2xl p-4">
+                                                <pre className="text-[11px] font-mono text-green-400/90 leading-relaxed whitespace-pre-wrap">
+                                                    <motion.span
+                                                        initial={{ opacity: 0 }}
+                                                        animate={{ opacity: 1 }}
+                                                        key={currentPreviewFile.slice(0, 50)}
+                                                    >
+                                                        {currentPreviewFile}
+                                                    </motion.span>
+                                                </pre>
+                                            </div>
                                         ) : (
-                                            <pre className="p-6 text-sm font-mono text-[hsl(var(--neon-text))] whitespace-pre-wrap leading-relaxed selection:bg-primary/30">
-                                                {viewingFileContent
-                                                    || allGeneratedFiles[activeFile]
-                                                    || (activeFile === 'src/components/Generated.tsx' ? generatedCode : '')
-                                                    || '// Select a file from the tree to view its contents'
-                                                }
-                                            </pre>
+                                            <div className="h-full flex items-center justify-center animate-fade-in">
+                                                <div className="text-center group">
+                                                    <div className="h-16 w-16 bg-primary/5 rounded-full flex items-center justify-center mx-auto mb-4 border border-primary/10 group-hover:scale-110 transition-transform duration-500">
+                                                        <Play className="h-8 w-8 text-primary shadow-primary" />
+                                                    </div>
+                                                    <p className="text-sm font-semibold text-foreground">Awaiting Generation</p>
+                                                    <p className="text-[11px] text-muted-foreground/60 mt-1 max-w-[220px]">Describe what you want to build and I&apos;ll generate production-ready React + Tailwind code with a live preview.</p>
+                                                </div>
+                                            </div>
                                         )}
                                     </div>
-                                </div>
-                            </div>
-                        )}
-                        {activeTab === 'diff' && previousCode && (
-                            <div className="w-full h-full flex flex-col">
-                                {/* File routes navigation */}
-                                {Object.keys(allGeneratedFiles).length > 0 && (
-                                    <div className="flex items-center justify-center gap-1 py-2 px-4 bg-background/80 border-b border-white/5 rounded-t-2xl flex-wrap">
-                                        {Object.keys(allGeneratedFiles).map((path) => (
-                                            <button
-                                                key={path}
-                                                onClick={() => setDiffFile(path)}
-                                                className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono rounded-md transition-all ${diffFile === path
-                                                    ? 'bg-primary/15 text-primary border border-primary/30'
-                                                    : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50 border border-transparent'
-                                                    }`}
-                                            >
-                                                <FileCode className={`h-3 w-3 shrink-0 ${path.endsWith('.tsx') || path.endsWith('.ts') ? 'text-blue-400' : path.endsWith('.css') ? 'text-pink-400' : path.endsWith('.json') ? 'text-yellow-400' : 'text-muted-foreground'}`} />
-                                                {path.split('/').pop()}
-                                            </button>
-                                        ))}
+                                )}
+                                {activeTab === 'code' && (
+                                    <div className="glass-strong rounded-2xl overflow-hidden h-full flex shadow-2xl border-white/5">
+                                        {/* File Tree Sidebar */}
+                                        {(generatedCode || Object.keys(allGeneratedFiles).length > 0) && (
+                                            <div className="w-52 shrink-0 border-r border-white/5 bg-sidebar/60 overflow-y-auto py-2">
+                                                <div className="flex items-center gap-1.5 px-3 py-1.5 mb-1">
+                                                    <FolderTree className="h-3.5 w-3.5 text-primary" />
+                                                    <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Explorer</span>
+                                                </div>
+                                                <FileTreeView
+                                                    files={buildFileTree(generatedCode, Object.keys(allGeneratedFiles).length > 0 ? allGeneratedFiles : undefined)}
+                                                    activeFile={activeFile}
+                                                    onSelect={(file) => {
+                                                        setActiveFile(file.path);
+                                                        setViewingFileContent(file.content);
+                                                    }}
+                                                />
+                                            </div>
+                                        )}
+                                        {/* Code Viewer */}
+                                        <div className="flex-1 flex flex-col min-w-0">
+                                            <div className="flex items-center gap-2 px-4 h-10 border-b border-white/5 bg-sidebar/80 text-[11px] font-mono text-muted-foreground">
+                                                <FileCode className="h-3.5 w-3.5 text-primary" />
+                                                <span className="truncate">{activeFile.split('/').pop() || 'Component.tsx'}</span>
+                                                {isEditing && activeFile === 'src/components/Generated.tsx' && (
+                                                    <span className="text-primary animate-pulse ml-auto flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-primary" /> LIVE EDITING</span>
+                                                )}
+                                            </div>
+                                            <div className="flex-1 overflow-auto bg-black/40">
+                                                {isEditing && activeFile === 'src/components/Generated.tsx' ? (
+                                                    <textarea
+                                                        value={editableCode}
+                                                        onChange={(e) => setEditableCode(e.target.value)}
+                                                        className="w-full h-full p-6 bg-transparent border-0 shadow-none focus:ring-0 font-mono text-sm text-[hsl(var(--neon-text))] resize-none leading-relaxed outline-none"
+                                                    />
+                                                ) : (
+                                                    <pre className="p-6 text-sm font-mono text-[hsl(var(--neon-text))] whitespace-pre-wrap leading-relaxed selection:bg-primary/30">
+                                                        {viewingFileContent
+                                                            || allGeneratedFiles[activeFile]
+                                                            || (activeFile === 'src/components/Generated.tsx' ? generatedCode : '')
+                                                            || '// Select a file from the tree to view its contents'
+                                                        }
+                                                    </pre>
+                                                )}
+                                            </div>
+                                        </div>
                                     </div>
                                 )}
-                                <div className="flex-1">
-                                    <CodeComparison
-                                        beforeCode={diffFile ? (previousAllFiles[diffFile] || '') : previousCode}
-                                        afterCode={diffFile ? (allGeneratedFiles[diffFile] || '') : generatedCode}
-                                        language="typescript"
-                                        filename={diffFile ? (diffFile.split('/').pop() || 'file') : 'Generated.tsx'}
-                                        beforeLabel="Before"
-                                        afterLabel="After"
-                                    />
-                                </div>
+                                {activeTab === 'diff' && previousCode && (
+                                    <div className="w-full h-full flex flex-col">
+                                        {/* File routes navigation */}
+                                        {Object.keys(allGeneratedFiles).length > 0 && (
+                                            <div className="flex items-center justify-center gap-1 py-2 px-4 bg-background/80 border-b border-white/5 rounded-t-2xl flex-wrap">
+                                                {Object.keys(allGeneratedFiles).map((path) => (
+                                                    <button
+                                                        key={path}
+                                                        onClick={() => setDiffFile(path)}
+                                                        className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono rounded-md transition-all ${diffFile === path
+                                                            ? 'bg-primary/15 text-primary border border-primary/30'
+                                                            : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50 border border-transparent'
+                                                            }`}
+                                                    >
+                                                        <FileCode className={`h-3 w-3 shrink-0 ${path.endsWith('.tsx') || path.endsWith('.ts') ? 'text-blue-400' : path.endsWith('.css') ? 'text-pink-400' : path.endsWith('.json') ? 'text-yellow-400' : 'text-muted-foreground'}`} />
+                                                        {path.split('/').pop()}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                        <div className="flex-1">
+                                            <CodeComparison
+                                                beforeCode={diffFile ? (previousAllFiles[diffFile] || '') : previousCode}
+                                                afterCode={diffFile ? (allGeneratedFiles[diffFile] || '') : generatedCode}
+                                                language="typescript"
+                                                filename={diffFile ? (diffFile.split('/').pop() || 'file') : 'Generated.tsx'}
+                                                beforeLabel="Before"
+                                                afterLabel="After"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
                             </div>
+                        </ResizablePanel>
+
+                        {/* Terminal Panel */}
+                        {terminalStore.open && (
+                            <>
+                                <ResizableHandle withHandle />
+                                <ResizablePanel defaultSize={30} minSize={15} maxSize={50}>
+                                    <TerminalPanel />
+                                </ResizablePanel>
+                            </>
                         )}
-                    </div>
+                    </ResizablePanelGroup>
                 </div>
             </div>
             <AnimatePresence>
@@ -3025,6 +3304,18 @@ Return the corrected code.`;
                                     <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Error Message</p>
                                     <p className="text-sm font-mono text-destructive break-words">{previewError.message}</p>
                                 </div>
+
+                                {/* Error Location (if available) */}
+                                {(previewError.source || previewError.line) && (
+                                    <div className="glass rounded-xl p-4 border border-border/50 bg-secondary/10">
+                                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Location</p>
+                                        <div className="flex flex-wrap gap-3 text-xs font-mono text-muted-foreground">
+                                            {previewError.source && <span>File: <span className="text-foreground">{previewError.source}</span></span>}
+                                            {previewError.line && <span>Line: <span className="text-foreground">{previewError.line}</span></span>}
+                                            {previewError.column && <span>Col: <span className="text-foreground">{previewError.column}</span></span>}
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* Stack Trace (if available) */}
                                 {previewError.stack && (

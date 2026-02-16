@@ -6,7 +6,7 @@ import asyncio
 import traceback
 from sqlalchemy import select, text
 from app.db.session import engine, AsyncSessionLocal
-from app.db.base import Base, User, Project
+from app.db.base import Base, User, Project, Chat
 from app.core.security import get_password_hash
 
 
@@ -23,7 +23,8 @@ async def init_db():
     async with engine.connect() as conn:
         curr_user = await conn.execute(text("SELECT current_user"))
         search_path = await conn.execute(text("SHOW search_path"))
-        print(f"[DB] Debug: User={curr_user.fetchone()[0]}, Path={search_path.fetchone()[0]}")
+        print(
+            f"[DB] Debug: User={curr_user.fetchone()[0]}, Path={search_path.fetchone()[0]}")
 
     print(f"[DB] Creating tables for: {list(Base.metadata.tables.keys())}")
     async with engine.begin() as conn:

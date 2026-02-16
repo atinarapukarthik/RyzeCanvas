@@ -22,11 +22,28 @@ class ChatMessageInput(BaseModel):
     content: str = Field(..., description="Message content")
 
 
+class ErrorContextItem(BaseModel):
+    """Error context for AI to reference and fix."""
+    id: str = Field(..., description="Error ID (referenced as @error_id)")
+    type: str = Field(...,
+                      description="Error type: 'runtime', 'build', 'type', 'lint', 'deployment'")
+    message: str = Field(..., description="Error message")
+    file: Optional[str] = Field(
+        default=None, description="File where error occurred")
+    line: Optional[int] = Field(default=None, description="Line number")
+    code_snippet: Optional[str] = Field(
+        default=None, description="Problematic code snippet")
+    stack_trace: Optional[str] = Field(
+        default=None, description="Full stack trace")
+    context: Optional[str] = Field(
+        default=None, description="Additional context about the error")
+
+
 class ChatRequestBody(BaseModel):
     """Request body for the chat endpoint."""
     prompt: str = Field(..., min_length=1, description="User's message")
     mode: str = Field(
-        default="chat", description="Mode: 'chat', 'plan', 'generate', 'plan_interactive', 'plan_implement'")
+        default="chat", description="Mode: 'chat', 'plan', 'generate', 'plan_interactive', 'plan_implement', 'ui_composer'")
     provider: str = Field(default="gemini", description="AI provider")
     model: str = Field(default="gemini-2.5-flash",
                        description="Model identifier")
@@ -54,6 +71,16 @@ class ChatRequestBody(BaseModel):
         default=None,
         description="User's selected design theme for consistent styling in generated code"
     )
+    # ── Error handling context ──
+    error_context: Optional[List[ErrorContextItem]] = Field(
+        default=None,
+        description="List of errors for AI to reference (use @error_id in prompt to reference them)"
+    )
+    # ── Cloud-native context fields ──
+    project_id: Optional[str] = Field(
+        default=None,
+        description="UUID of the project (for Supabase Storage routing)"
+    )
 
     class Config:
         json_schema_extra = {
@@ -62,6 +89,7 @@ class ChatRequestBody(BaseModel):
                 "mode": "generate",
                 "provider": "gemini",
                 "model": "gemini-2.5-flash",
+                "project_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
                 "conversation_history": [
                     {"role": "user", "content": "I need a login page"},
                     {"role": "ai", "content": "I can help with that. What fields do you need?"},
@@ -73,29 +101,25 @@ class ChatRequestBody(BaseModel):
 @router.post("/stream")
 async def chat_stream(
     body: ChatRequestBody,
+    current_user: User = Depends(get_current_user),
 ):
     """
     Stream a chat response via Server-Sent Events (SSE).
 
-    Supports three modes:
+    Supports multiple modes:
     - **chat**: Conversational responses with streaming tokens
     - **plan**: Architectural breakdown of the requested UI
-    - **generate**: Full LangGraph pipeline (Retrieve → Plan → Generate → Validate)
+    - **generate**: Full code generation pipeline using Artifacts
 
-    The stream emits events of these types:
-    - `step`: Progress update (e.g., "Retrieving context...")
-    - `token`: Streaming text token for the response
-    - `plan`: Complete plan text
-    - `code`: Generated JSON (only in generate mode)
-    - `error`: Error message
-    - `done`: Stream complete with metadata
+    Files are written to Supabase Storage at path:
+    ``{user_id}/{project_id}/{file_path}``
 
-    **Authentication:** Not required (public access)
+    **Authentication:** Required (user_id derived from JWT)
     """
-    if body.mode not in ("chat", "plan", "generate", "plan_interactive", "plan_implement"):
+    if body.mode not in ("chat", "plan", "generate", "plan_interactive", "plan_implement", "ui_composer"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid mode '{body.mode}'. Must be 'chat', 'plan', 'generate', 'plan_interactive', or 'plan_implement'.",
+            detail=f"Invalid mode '{body.mode}'. Must be 'chat', 'plan', 'generate', 'plan_interactive', 'plan_implement', or 'ui_composer'.",
         )
 
     chat_request = ChatRequest(
@@ -112,6 +136,10 @@ async def chat_stream(
         plan_data=body.plan_data,
         existing_code=body.existing_code,
         theme_context=body.theme_context,
+        error_context=[e.dict()
+                       for e in body.error_context] if body.error_context else None,
+        project_id=body.project_id,
+        user_id=str(current_user.id),
     )
 
     return StreamingResponse(
@@ -147,6 +175,9 @@ async def chat_message(
         ],
         web_search_context=body.web_search_context,
         theme_context=body.theme_context,
+        error_context=[e.dict() for e in body.error_context] if body.error_context else None,
+        project_id=body.project_id,
+        user_id=str(current_user.id),
     )
 
     import json
@@ -158,7 +189,6 @@ async def chat_message(
     done_meta = {}
 
     async for raw_event in orchestrate_chat(chat_request):
-        # Parse the SSE data line
         if not raw_event.startswith("data: "):
             continue
         try:
@@ -174,7 +204,7 @@ async def chat_message(
         elif evt == "token":
             tokens.append(data)
         elif evt == "plan":
-            pass  # full plan is the joined tokens
+            pass
         elif evt == "code":
             code = data
         elif evt == "error":

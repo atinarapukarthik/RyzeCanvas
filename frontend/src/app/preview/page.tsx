@@ -17,13 +17,13 @@ const DynamicRenderer = dynamic(() =>
 function PreviewContent() {
     const searchParams = useSearchParams();
     const [plan, setPlan] = useState<UIPlan | null>(null);
+    const [rawCode, setRawCode] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        const loadPlan = () => {
+        const loadContent = () => {
             try {
-                // Get context ID from URL or fallback to session storage
                 const contextId = searchParams.get('contextId');
                 let storageKey = 'ryze-generated-code';
 
@@ -49,17 +49,19 @@ function PreviewContent() {
                     const parsed = JSON.parse(stored);
                     if (parsed && typeof parsed === 'object' && parsed.layout) {
                         setPlan(parsed as UIPlan);
+                        setRawCode(null);
                         setError(null);
-                    } else {
-                        // It might be raw code, not a JSON plan.
-                        // For now, we only support JSON plan preview here. 
-                        // Raw code uses the studio's iframe preview.
-                        setError("The content is code intermixed with instructions, not a pure JSON plan. Use the Code tab in Studio.");
+                        return;
                     }
                 } catch {
-                    // Not valid JSON
-                    setError("Invalid content format. Expected JSON plan.");
+                    // Ignore JSON error, it might be raw code
                 }
+
+                // If not JSON, treat as Raw Code (React/HTML)
+                // We'll wrap it in a simple HTML structure for the iframe
+                setRawCode(stored);
+                setPlan(null);
+                setError(null);
 
             } catch (err: unknown) {
                 console.error("Preview load error:", err);
@@ -70,13 +72,11 @@ function PreviewContent() {
             }
         };
 
-        // Initial load
-        loadPlan();
+        loadContent();
 
-        // Listen for storage updates to refresh preview on new generation
         const handleStorage = (e: StorageEvent) => {
             if (e.key && e.key.includes('ryze-generated-code')) {
-                loadPlan();
+                loadContent();
             }
         };
         window.addEventListener('storage', handleStorage);
@@ -107,11 +107,79 @@ function PreviewContent() {
         );
     }
 
-    if (!plan) return null;
+    // 1. JSON Plan Rendering
+    // 1. JSON Plan Rendering
+    if (plan && Array.isArray(plan.components)) {
+        return (
+            <div className="min-h-screen bg-background">
+                <DynamicRenderer plan={plan} />
+            </div>
+        );
+    }
+
+    // 2. Raw Code Rendering (Iframe Sandbox)
+    if (rawCode) {
+        const isHTML = rawCode.trim().startsWith("<!DOCTYPE html") || rawCode.trim().startsWith("<html");
+
+        if (isHTML) {
+            return (
+                <iframe
+                    title="Live Preview"
+                    srcDoc={rawCode}
+                    className="w-full h-screen border-none bg-white"
+                    sandbox="allow-scripts"
+                />
+            );
+        }
+
+        // Fallback: Show "Code Preview" placeholder or raw text if not HTML
+        return (
+            <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
+                <div className="bg-white border-b px-4 py-3 flex items-center justify-between shadow-sm sticky top-0 z-10">
+                    <div className="flex items-center gap-2">
+                        <div className="h-3 w-3 rounded-full bg-blue-500"></div>
+                        <span className="font-semibold text-sm text-slate-700">Code Preview</span>
+                    </div>
+                    <span className="text-xs px-2 py-1 bg-slate-100 rounded text-slate-500">ReadOnly</span>
+                </div>
+                <div className="flex-1 p-8 overflow-auto">
+                    <div className="max-w-4xl mx-auto">
+                        <div className="bg-blue-50 border border-blue-100 text-blue-800 p-4 rounded-lg mb-8 flex items-start gap-3">
+                            <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5 text-blue-600" />
+                            <div>
+                                <h3 className="font-bold text-sm mb-1">Preview Mode Limited</h3>
+                                <p className="text-sm opacity-90">
+                                    The AI generated raw React code instead of a UI Plan. Detailed interactive preview is disabled in this view.
+                                    <br />
+                                    Please use the <strong>Workshop / Code</strong> tab to edit or run this project.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="relative rounded-lg overflow-hidden shadow-xl border border-slate-200 bg-white">
+                            <div className="absolute top-0 left-0 right-0 h-10 bg-slate-100 border-b border-slate-200 flex items-center px-4 gap-2">
+                                <div className="h-3 w-3 rounded-full bg-red-400"></div>
+                                <div className="h-3 w-3 rounded-full bg-yellow-400"></div>
+                                <div className="h-3 w-3 rounded-full bg-green-400"></div>
+                            </div>
+                            <pre className="bg-white text-slate-800 p-6 pt-14 overflow-x-auto text-sm font-mono leading-relaxed max-w-full">
+                                {rawCode}
+                            </pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
-        <div className="min-h-screen bg-background">
-            <DynamicRenderer plan={plan} />
+        <div className="flex h-screen flex-col items-center justify-center bg-background text-muted-foreground p-4">
+            <div className="rounded-full bg-muted p-6 mb-4">
+                <Loader2 className="h-8 w-8 text-muted-foreground opacity-50" />
+            </div>
+            <h3 className="text-lg font-semibold mb-1">Ready to Build</h3>
+            <p className="max-w-sm text-center text-sm">
+                No preview content available yet. Start a chat in the Studio to generate your first interface.
+            </p>
         </div>
     );
 }

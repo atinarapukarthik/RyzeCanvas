@@ -113,9 +113,12 @@ async def get_current_user(
         result = await db.execute(select(User).where(User.id == token_data.sub))
         user = result.scalar_one_or_none()
     else:
-        # Fallback to Supabase API
-        from app.core.supabase import supabase
-        response = supabase.table("users").select(
+        # Fallback to Supabase API — use admin client to bypass RLS
+        from app.core.supabase import supabase_admin, supabase
+        supa = supabase_admin or supabase
+        if not supa:
+            raise credentials_exception
+        response = supa.table("users").select(
             "*").eq("id", token_data.sub).execute()
         if response.data:
             row = response.data[0]

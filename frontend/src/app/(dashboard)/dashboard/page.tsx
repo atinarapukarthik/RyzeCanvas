@@ -21,6 +21,8 @@ import {
   Trash2,
   Palette,
   Check,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -35,9 +37,11 @@ export default function DashboardPage() {
   const [webSearchActive, setWebSearchActive] = useState(false);
   const queryClient = useQueryClient();
 
-  const { data: projects, isLoading } = useQuery({
+  const { data: projects, isLoading, error, refetch } = useQuery({
     queryKey: ["projects"],
     queryFn: fetchProjects,
+    enabled: !!user,
+    retry: 2,
   });
 
   const deleteMutation = useMutation({
@@ -83,7 +87,7 @@ export default function DashboardPage() {
   const allProjects = projects || [];
 
   return (
-    <div className="relative min-h-screen bg-black">
+    <div className="relative h-screen bg-black overflow-hidden">
       {/* Neon Raymarcher Background */}
       <div className="absolute inset-0 z-0">
         <ErrorBoundary fallback={<div className="w-full h-full bg-black/50" />}>
@@ -91,7 +95,7 @@ export default function DashboardPage() {
         </ErrorBoundary>
       </div>
 
-      <div className="relative z-10 flex flex-col items-center justify-start w-full h-full pt-[12vh] px-4 overflow-y-auto no-scrollbar pb-12">
+      <div className="relative z-10 flex flex-col items-center justify-start w-full h-full pt-[12vh] px-4 overflow-y-auto pb-12 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
         <ErrorBoundary>
           {/* Greeting & Title */}
           <motion.div
@@ -212,45 +216,77 @@ export default function DashboardPage() {
           </motion.div>
 
           {/* Projects */}
-          {(allProjects.length > 0 || isLoading) && (
-            <motion.div
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.7, duration: 0.6 }}
-              className="w-full max-w-4xl"
-            >
-              <div className="flex items-center justify-between mb-6 px-1">
-                <div className="flex items-center gap-2.5">
-                  <FolderOpen className="h-4 w-4 text-white/20" />
-                  <h2 className="text-xs font-bold uppercase tracking-[0.1em] text-white/40">Your Projects</h2>
-                  {allProjects.length > 0 && (
-                    <span className="text-[10px] text-white/20 font-medium">{allProjects.length}</span>
-                  )}
-                </div>
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.7, duration: 0.6 }}
+            className="w-full max-w-4xl"
+          >
+            <div className="flex items-center justify-between mb-6 px-1">
+              <div className="flex items-center gap-2.5">
+                <FolderOpen className="h-4 w-4 text-white/20" />
+                <h2 className="text-xs font-bold uppercase tracking-[0.1em] text-white/40">Your Projects</h2>
                 {allProjects.length > 0 && (
-                  <button
-                    onClick={() => router.push("/history")}
-                    className="text-[11px] font-semibold text-white/20 hover:text-white/60 transition-colors flex items-center gap-1.5 group"
-                  >
-                    View all
-                    <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
-                  </button>
+                  <span className="text-[10px] text-white/20 font-medium">{allProjects.length}</span>
                 )}
               </div>
+              {allProjects.length > 0 && (
+                <button
+                  onClick={() => router.push("/history")}
+                  className="text-[11px] font-semibold text-white/20 hover:text-white/60 transition-colors flex items-center gap-1.5 group"
+                >
+                  View all
+                  <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+                </button>
+              )}
+            </div>
 
-              <div className="max-h-[50vh] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+            {/* Error state */}
+            {error && (
+              <div className="flex flex-col items-center gap-3 py-10 px-4 rounded-2xl bg-white/[0.02] border border-red-500/10">
+                <AlertCircle className="h-6 w-6 text-red-400/60" />
+                <p className="text-sm text-white/40 text-center">Failed to load projects</p>
+                <p className="text-[11px] text-white/20 text-center max-w-xs">{(error as Error).message || "Check your connection and try again."}</p>
+                <button
+                  onClick={() => refetch()}
+                  className="flex items-center gap-1.5 px-4 py-2 mt-1 rounded-full bg-white/[0.05] border border-white/[0.1] text-white/50 text-xs hover:bg-white/[0.1] hover:text-white transition-all"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {/* Loading state */}
+            {isLoading && !error && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.8 + i * 0.1 }}
+                    className="h-32 rounded-2xl bg-white/[0.02] border border-white/[0.05] animate-pulse"
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Empty state */}
+            {!isLoading && !error && allProjects.length === 0 && (
+              <div className="flex flex-col items-center gap-3 py-12 px-4 rounded-2xl bg-white/[0.02] border border-white/[0.05]">
+                <div className="h-12 w-12 rounded-xl bg-[hsl(234,89%,74%)]/10 flex items-center justify-center border border-[hsl(234,89%,74%)]/20">
+                  <Code2 className="h-6 w-6 text-[hsl(234,89%,74%)]/50" />
+                </div>
+                <p className="text-sm text-white/40 text-center">No projects yet</p>
+                <p className="text-[11px] text-white/20 text-center max-w-xs">Type a prompt above to create your first project</p>
+              </div>
+            )}
+
+            {/* Project grid */}
+            {!error && allProjects.length > 0 && (
+              <div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {isLoading &&
-                    Array.from({ length: 3 }).map((_, i) => (
-                      <motion.div
-                        key={i}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.8 + i * 0.1 }}
-                        className="h-32 rounded-2xl bg-white/[0.02] border border-white/[0.05] animate-pulse"
-                      />
-                    ))}
-
                   {allProjects.map((project, index) => (
                     <motion.div
                       key={project.id}
@@ -277,7 +313,7 @@ export default function DashboardPage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <h3 className="text-sm font-semibold text-white truncate tracking-tight group-hover:text-[hsl(234,89%,74%)] transition-colors">
-                            {project.title}
+                            {project.title || project.prompt?.slice(0, 30) || "Untitled Project"}
                           </h3>
                           {project.prompt && (
                             <p className="text-[11px] text-white/30 truncate mt-1 leading-relaxed">
@@ -310,8 +346,8 @@ export default function DashboardPage() {
                   ))}
                 </div>
               </div>
-            </motion.div>
-          )}
+            )}
+          </motion.div>
         </ErrorBoundary>
       </div>
     </div>

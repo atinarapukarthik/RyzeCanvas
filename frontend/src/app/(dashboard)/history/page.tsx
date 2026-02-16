@@ -44,7 +44,7 @@ export default function HistoryPage() {
 
     const filtered = projects?.filter(
         (p) =>
-            p.title.toLowerCase().includes(search.toLowerCase()) ||
+            (p.title || "").toLowerCase().includes(search.toLowerCase()) ||
             (p.prompt && p.prompt.toLowerCase().includes(search.toLowerCase()))
     );
 
@@ -85,7 +85,7 @@ export default function HistoryPage() {
                                 <Wand2 className="h-5 w-5 text-primary" />
                             </div>
                             <div className="flex-1 min-w-0">
-                                <h3 className="font-medium text-sm">{p.title}</h3>
+                                <h3 className="font-medium text-sm">{p.title || p.prompt?.slice(0, 30) || "Untitled Project"}</h3>
                                 {p.prompt && (
                                     <p className="text-xs text-muted-foreground mt-0.5 truncate">{p.prompt}</p>
                                 )}
