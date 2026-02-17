@@ -413,8 +413,13 @@ def _extract_artifacts(text: str) -> List[List[RyzeAction]]:
     """
     Parse the full LLM response text and extract all <ryze_artifact> blocks.
     Returns a list of artifacts, where each artifact is a list of RyzeActions.
+    Handles truncated responses by attempting to close tags.
     """
     artifacts = []
+    
+    # Auto-close truncated artifact tags if necessary
+    if "<ryze_artifact" in text and "</ryze_artifact>" not in text:
+        text += "</ryze_artifact>"
 
     artifact_pattern = re.compile(
         r'<ryze_artifact.*?>(.*?)</ryze_artifact>', re.DOTALL)
@@ -426,6 +431,11 @@ def _extract_artifacts(text: str) -> List[List[RyzeAction]]:
 
     for artifact_match in artifact_pattern.finditer(text):
         artifact_content = artifact_match.group(1)
+        
+        # Auto-close truncated action tags inside the artifact
+        if "<ryze_action" in artifact_content and "</ryze_action>" not in artifact_content:
+             artifact_content += "</ryze_action>"
+
         actions = []
 
         for action_match in action_pattern.finditer(artifact_content):

@@ -18,7 +18,7 @@ from langchain_core.output_parsers import JsonOutputParser
 from app.core.config import settings
 from app.core.component_library import UIPlan
 from app.agent.system_prompt import (
-    get_generate_plan_prompt,
+    get_plan_prompt,
     get_generate_json_prompt,
     get_explainer_prompt,
     get_retry_context,
@@ -94,7 +94,7 @@ def plan_node(state: AgentState) -> AgentState:
 
     llm = get_llm()
 
-    system_prompt = get_generate_plan_prompt()
+    system_prompt = get_plan_prompt()
 
     messages = [
         SystemMessage(content=system_prompt),
