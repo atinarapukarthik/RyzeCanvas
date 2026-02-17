@@ -227,6 +227,15 @@ export async function fetchProjects(): Promise<Project[]> {
   return data.map(mapProject);
 }
 
+export async function fetchProject(projectId: string): Promise<Project> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}`, {
+    headers: getHeaders(),
+    credentials: "include",
+  });
+  const data = await handleResponse<Record<string, any>>(res);
+  return mapProject(data);
+}
+
 export async function createProject(prompt: string, options?: { code?: string, provider?: string, model?: string, webSearchEnabled?: boolean, uploadedFiles?: File[] }): Promise<Project> {
   // Mapping prompt to description, code to code_json
   const payload = {
@@ -347,6 +356,7 @@ export interface ChatStreamOptions {
   planData?: Record<string, any>;
   existingCode?: string;
   themeContext?: string;
+  projectId?: string;
   onStep?: (step: string) => void;
   onToken?: (token: string) => void;
   onPlan?: (plan: string) => void;
@@ -373,7 +383,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
   const {
     prompt, mode, provider, model,
     conversationHistory = [], webSearchContext,
-    planAnswers, planData, existingCode, themeContext,
+    planAnswers, planData, existingCode, themeContext, projectId,
     onStep, onToken, onPlan, onCode, onError, onDone,
     onQuestions, onPlanReady, onInstall, onFileUpdate, onTodo,
     onCommand, onLogAnalysis, onExplanation, onWebSearch,
@@ -394,6 +404,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
     ...(planData ? { plan_data: planData } : {}),
     ...(existingCode ? { existing_code: existingCode } : {}),
     ...(themeContext ? { theme_context: themeContext } : {}),
+    ...(projectId ? { project_id: projectId } : {}),
   };
 
   const res = await fetch(`${API_BASE_URL}/chat/stream`, {

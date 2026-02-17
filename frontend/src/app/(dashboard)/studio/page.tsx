@@ -11,7 +11,7 @@ import { TerminalPanel } from "@/components/TerminalPanel";
 import { useUIStore } from "@/stores/uiStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
-import { createProject, searchWeb, updateProject, streamChat, fetchProjects } from "@/lib/api";
+import { createProject, searchWeb, updateProject, streamChat, fetchProjects, fetchProject } from "@/lib/api";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -660,7 +660,13 @@ function FileTreeView({ files, activeFile, onSelect, depth = 0 }: {
     );
 }
 
-function StudioContent() {
+export interface StudioContentProps {
+    initialProjectId?: string;
+    initialPrompt?: string;
+    initialMode?: string;
+}
+
+export function StudioContent({ initialProjectId, initialPrompt, initialMode }: StudioContentProps = {}) {
     const { githubConnected, setGithubConnected, selectedModel, githubModal, setGithubModal, designTheme } = useUIStore();
     const terminalStore = useTerminalStore();
     const router = useRouter();
@@ -717,6 +723,9 @@ function StudioContent() {
     const [iframeKey, setIframeKey] = useState(0);
     const [previewError, setPreviewError] = useState<{ message: string; stack?: string; source?: string; line?: number; column?: number } | null>(null);
     const [errorModalOpen, setErrorModalOpen] = useState(false);
+    const [autoFixAttempts, setAutoFixAttempts] = useState(0);
+    const [isAutoFixing, setIsAutoFixing] = useState(false);
+    const autoFixTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [archivesModalOpen, setArchivesModalOpen] = useState(false);
     const [archivedChats, setArchivedChats] = useState<ArchivedChat[]>([]);
     const [historySource, setHistorySource] = useState<'archives' | 'projects'>('archives');
@@ -725,7 +734,7 @@ function StudioContent() {
     const abortControllerRef = useRef<AbortController | null>(null);
     const streamingMessageRef = useRef<string>('');
     const initialPromptSentRef = useRef<boolean>(false);
-    const handleSendRef = useRef<((msg?: string) => Promise<void>) | null>(null);
+    const handleSendRef = useRef<((msg?: string, mode?: "plan" | "build" | "chat") => Promise<void>) | null>(null);
     const routeSearchRef = useRef<HTMLDivElement>(null);
 
     const getContextId = useCallback(() => projectId || sessionId, [projectId, sessionId]);
@@ -756,10 +765,10 @@ function StudioContent() {
         }
     }, [sessionId]);
 
-    // Load project from history if projectId is in URL
+    // Load project from history if projectId is in URL or prop
     useEffect(() => {
-        const loadProjectId = searchParams.get('project');
-        const promptParam = searchParams.get('prompt');
+        const loadProjectId = initialProjectId || searchParams.get('project');
+        const promptParam = initialPrompt || searchParams.get('prompt');
 
         // If there's a prompt but no project, this is a NEW session - clear old data and generate new session ID
         if (promptParam && !loadProjectId) {
@@ -786,12 +795,15 @@ function StudioContent() {
         }
 
         if (loadProjectId) {
-            fetchProjects().then((projects) => {
-                const project = projects.find((p) => p.id === loadProjectId);
+            // Use direct fetch for single project instead of fetching all
+            fetchProject(loadProjectId).then((project) => {
                 if (project && project.code) {
                     setProjectId(project.id);
                     setProjectName(project.title || 'Untitled Project');
                     setActiveTab('preview');
+
+                    // Clear terminal for this project scope
+                    terminalStore.clearForProject(project.id);
 
                     // Detect if code_json is a multi-file JSON project or single-file code
                     let parsedFiles: Record<string, string> | null = null;
@@ -869,7 +881,7 @@ function StudioContent() {
                 // Failed to load project
             });
         }
-    }, [searchParams]);
+    }, [searchParams, initialProjectId, initialPrompt]);
 
     // Load chat history from localStorage on mount (only if not a new session and no project loaded)
     useEffect(() => {
@@ -895,6 +907,9 @@ function StudioContent() {
                 if (project && project.code) {
                     setProjectId(project.id);
                     setProjectName(project.title || 'Untitled Project');
+
+                    // Clear terminal for this project scope
+                    terminalStore.clearForProject(project.id);
 
                     // Parse multi-file project
                     let parsedFiles: Record<string, string> | null = null;
@@ -1031,8 +1046,8 @@ function StudioContent() {
 
     // Load prompt and mode from Dashboard
     useEffect(() => {
-        const promptParam = searchParams.get('prompt');
-        const modeParam = searchParams.get('mode');
+        const promptParam = initialPrompt || searchParams.get('prompt');
+        const modeParam = initialMode || searchParams.get('mode');
         const webSearchParam = searchParams.get('webSearch');
 
         if (modeParam === 'plan' || modeParam === 'build') {
@@ -1047,23 +1062,27 @@ function StudioContent() {
             setInput(promptParam);
             initialPromptSentRef.current = true;
         }
-    }, [searchParams]);
+    }, [searchParams, initialPrompt, initialMode]);
 
     // Auto-send the initial prompt from Dashboard
     useEffect(() => {
-        const promptParam = searchParams.get('prompt');
+        const promptParam = initialPrompt || searchParams.get('prompt');
         if (promptParam && input === promptParam && !generating && initialPromptSentRef.current) {
             // Trigger send after a small delay to ensure state is settled
             const timer = setTimeout(() => {
                 if (input.trim()) {
                     handleSendRef.current?.(input);
                     // Clear URL params so reload doesn't re-send the prompt
-                    router.replace('/studio', { scroll: false });
+                    if (initialProjectId) {
+                        router.replace(`/projects/${initialProjectId}`, { scroll: false });
+                    } else {
+                        router.replace('/studio', { scroll: false });
+                    }
                 }
             }, 100);
             return () => clearTimeout(timer);
         }
-    }, [input, generating, searchParams, router]);
+    }, [input, generating, searchParams, router, initialPrompt, initialProjectId]);
 
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1147,6 +1166,56 @@ function StudioContent() {
         setErrorModalOpen(false);
     }, [generatedCode, previewRoute]);
 
+    // Auto-fix: If preview errors appear shortly after generation completes, auto-fix them
+    useEffect(() => {
+        if (!previewError || generating || isAutoFixing || autoFixAttempts >= 2) return;
+
+        // Only auto-fix if we just finished generating (within 5 seconds)
+        if (autoFixTimerRef.current) clearTimeout(autoFixTimerRef.current);
+        autoFixTimerRef.current = setTimeout(() => {
+            if (previewError && !generating && autoFixAttempts < 2) {
+                setIsAutoFixing(true);
+                setAutoFixAttempts(prev => prev + 1);
+
+                // Show a clean user-facing message
+                terminalStore.addEntry('info', `Detected runtime error. Auto-fixing (attempt ${autoFixAttempts + 1}/2)...`);
+
+                // Build structured code context so the AI can read the files
+                let codeContext = '';
+                const files = allGeneratedFiles;
+                if (Object.keys(files).length > 0) {
+                    const errorFile = previewError.source;
+                    const sortedPaths = Object.keys(files).sort((a, b) => {
+                        if (errorFile) {
+                            if (a.includes(errorFile) || errorFile.includes(a)) return -1;
+                            if (b.includes(errorFile) || errorFile.includes(b)) return 1;
+                        }
+                        return a.localeCompare(b);
+                    });
+                    codeContext = '\n\nCurrent project files:\n';
+                    for (const filePath of sortedPaths) {
+                        codeContext += `\n--- FILE: ${filePath} ---\n${files[filePath]}\n--- END FILE ---\n`;
+                    }
+                }
+
+                const fixPrompt = `Fix this runtime error. Only fix the broken file(s), do NOT regenerate everything.\n\nError: ${previewError.message}${previewError.source ? `\nFile: ${previewError.source}` : ''}${previewError.line ? `\nLine: ${previewError.line}` : ''}${previewError.stack ? `\nStack: ${previewError.stack}` : ''}${codeContext}\n\nReturn ONLY the corrected file(s) using <ryze_artifact> format.`;
+                handleSendRef.current?.(fixPrompt, 'chat');
+                setIsAutoFixing(false);
+            }
+        }, 3000);
+
+        return () => {
+            if (autoFixTimerRef.current) clearTimeout(autoFixTimerRef.current);
+        };
+    }, [previewError, generating, isAutoFixing, autoFixAttempts, allGeneratedFiles]);
+
+    // Reset auto-fix counter when user sends a new prompt
+    useEffect(() => {
+        if (generating) {
+            setAutoFixAttempts(0);
+        }
+    }, [generating]);
+
     // Detect if the generated code is a UI Plan (JSON)
     const uiPlan = useMemo(() => {
         try {
@@ -1180,20 +1249,19 @@ function StudioContent() {
         setInput('');
 
         // Check if this is a new session from dashboard (has prompt param but no project param)
-        const promptParam = searchParams.get('prompt');
-        const loadProjectId = searchParams.get('project');
-        const isNewSession = promptParam && !loadProjectId;
+        const promptParam = initialPrompt || searchParams.get('prompt');
+        const loadProjectId = initialProjectId || searchParams.get('project');
+        const isNewSession = (promptParam && !loadProjectId) || (!projectId && !loadProjectId);
 
         // Determine the orchestration mode
-        // If specific mode requested (like 'chat' for debug), respect it
-        // Otherwise derive from state
+        // CRITICAL: If modeArg is explicitly 'chat' (e.g. for error fixing), ALWAYS respect it.
+        // Never override to 'generate' — that causes full regeneration and cascading errors.
         let mode: 'chat' | 'plan_interactive' | 'generate' = chatMode === 'plan' ? 'plan_interactive' : 'chat';
         if (modeArg === 'chat') mode = 'chat';
-        if (modeArg === 'plan') mode = 'plan_interactive'; // If explicitly prompted for plan
+        if (modeArg === 'plan') mode = 'plan_interactive';
 
-        // For new sessions, or if in chat mode and using build keywords, default to 'generate'
-        // BUT if explicitly in 'plan' mode, we stay in 'plan_interactive' to allow questioning.
-        const isGenerateRequest = (isNewSession || (chatMode === 'chat' && (
+        // Only use 'generate' mode for actual new generation requests, NOT when mode is explicitly set
+        const isGenerateRequest = !modeArg && (isNewSession || (chatMode === 'chat' && (
             prompt.toLowerCase().includes('build') ||
             prompt.toLowerCase().includes('generate') ||
             prompt.toLowerCase().includes('create') ||
@@ -1203,10 +1271,15 @@ function StudioContent() {
 
         const orchestrationMode = isGenerateRequest ? 'generate' : mode;
 
-        // Add user message
+        // Determine if this is an auto-fix request (don't show code in user message)
+        const isFixRequest = modeArg === 'chat' && prompt.includes('Fix this runtime error');
+
+        // Add user message — for fix requests, show a clean message instead of the full prompt
         setMessages((m) => [...m, {
             role: 'user',
-            content: chatMode === 'plan' ? `[Plan] ${prompt}` : prompt,
+            content: isFixRequest
+                ? 'Fix the runtime error in the generated code.'
+                : (chatMode === 'plan' ? `[Plan] ${prompt}` : prompt),
         }]);
         setGenerating(true);
         setThinkingSteps([]);
@@ -1218,9 +1291,9 @@ function StudioContent() {
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
 
-        // Web search context
+        // Web search context — SKIP for fix requests (code context in URL causes 414 errors)
         let webSearchContext: string | undefined;
-        if (webSearchEnabled) {
+        if (webSearchEnabled && !isFixRequest) {
             setSearchingWeb(true);
             setThinkingSteps((s) => [...s, 'Searching the web...']);
             try {
@@ -1271,9 +1344,17 @@ function StudioContent() {
 
         try {
             // Pass existing code context so the AI can reason about modifications
-            let existingCodeContext = generatedCode || (Object.keys(allGeneratedFiles).length > 0
-                ? JSON.stringify(allGeneratedFiles)
-                : undefined);
+            // Structure it as readable file listings instead of raw JSON
+            let existingCodeContext: string | undefined;
+            if (Object.keys(allGeneratedFiles).length > 0) {
+                const fileParts: string[] = [];
+                for (const [filePath, code] of Object.entries(allGeneratedFiles)) {
+                    fileParts.push(`--- FILE: ${filePath} ---\n${code}\n--- END FILE ---`);
+                }
+                existingCodeContext = fileParts.join('\n\n');
+            } else if (generatedCode) {
+                existingCodeContext = generatedCode;
+            }
 
             // CRITICAL: If there is a runtime error visible in the preview,
             // ALERT the AI about it so it can fix it.
@@ -1313,8 +1394,9 @@ Fix this error in your next response.
                 model: selectedModel.id,
                 conversationHistory,
                 webSearchContext,
-                existingCode: existingCodeContext, // Pass the error-augmented context
+                existingCode: existingCodeContext,
                 themeContext: themeCtx,
+                projectId: projectId || undefined,
                 signal: abortController.signal,
 
                 onStep: (step) => {
@@ -1597,7 +1679,8 @@ Fix this error in your next response.
                             : codeForSave;
                         if (projectId) {
                             updateProject(projectId, { code_json: saveCode, description: prompt }).catch(() => { });
-                        } else {
+                        } else if (!isFixRequest) {
+                            // Only create new project for actual generation, NOT for fix requests
                             createProject(prompt, {
                                 code: saveCode,
                                 provider: selectedModel.provider,
@@ -1605,14 +1688,41 @@ Fix this error in your next response.
                             }).then((project) => {
                                 migrateSessionToProject(project.id);
                                 setProjectId(project.id);
-                                // Update URL so refresh/navigation preserves project context
-                                const params = new URLSearchParams(searchParams.toString());
-                                params.set('project', project.id);
-                                // Remove prompt/mode params to clean up URL
-                                params.delete('prompt');
-                                params.delete('mode');
-                                router.replace(`/studio?${params.toString()}`, { scroll: false });
+                                router.replace(`/projects/${project.id}`, { scroll: false });
                             }).catch(() => { });
+                        }
+                    }
+
+                    // Handle chat-mode completion (fixes, updates)
+                    // Show commit-like message for files updated via chat mode
+                    if (orchestrationMode === 'chat' && meta?.all_files) {
+                        const updatedFiles = meta.all_files as Record<string, string>;
+                        if (Object.keys(updatedFiles).length > 0) {
+                            setAllGeneratedFiles((prev) => ({ ...prev, ...updatedFiles }));
+                            // Force preview reload
+                            setIframeKey((k) => k + 1);
+
+                            const fileNames = Object.keys(updatedFiles).map(p => p.split('/').pop());
+                            terminalStore.addEntry('success', `Fixed: ${fileNames.join(', ')}`, undefined, 'complete');
+
+                            // Add commit-like message
+                            const fixedFiles = Object.keys(updatedFiles).map(p => ({
+                                name: p.split('/').pop() || p,
+                                path: p,
+                                status: 'modified' as const,
+                            }));
+                            setMessages((m) => [...m, {
+                                role: 'ai',
+                                content: `Updated ${fixedFiles.length} file${fixedFiles.length > 1 ? 's' : ''}`,
+                                isCommit: true,
+                                files: fixedFiles,
+                            }]);
+
+                            // Save to project if we have one
+                            if (projectId) {
+                                const mergedFiles = { ...allGeneratedFiles, ...updatedFiles };
+                                updateProject(projectId, { code_json: JSON.stringify(mergedFiles) }).catch(() => { });
+                            }
                         }
                     }
 
@@ -2118,28 +2228,47 @@ Fix this error in your next response.
             ? recentErrors.map((e) => `- ${e.message}${e.detail ? `\n  Detail: ${e.detail}` : ''}`).join('\n')
             : '';
 
-        // Build a detailed fix prompt with all available error info
-        const fixPrompt = `CRITICAL: The application is crashing with the following error.
+        // Build structured code context so the AI can READ the current files before fixing
+        let codeContext = '';
+        const files = allGeneratedFiles;
+        if (Object.keys(files).length > 0) {
+            // If we know the error source file, show it first and in full
+            const errorFile = previewError.source;
+            const sortedPaths = Object.keys(files).sort((a, b) => {
+                // Prioritize the error file at the top
+                if (errorFile) {
+                    if (a.includes(errorFile) || errorFile.includes(a)) return -1;
+                    if (b.includes(errorFile) || errorFile.includes(b)) return 1;
+                }
+                return a.localeCompare(b);
+            });
+            codeContext = '\n\nHere are ALL the current project files. READ them carefully before fixing:\n';
+            for (const filePath of sortedPaths) {
+                codeContext += `\n--- FILE: ${filePath} ---\n${files[filePath]}\n--- END FILE ---\n`;
+            }
+        }
 
-Error: ${previewError.message}
+        // Build a targeted fix prompt
+        const fixPrompt = `Fix this runtime error. Do NOT regenerate the entire application. Only fix the specific broken file(s).
+
+ERROR:
+${previewError.message}
 ${previewError.source ? `Source File: ${previewError.source}` : ''}
 ${previewError.line ? `Line: ${previewError.line}${previewError.column ? `, Column: ${previewError.column}` : ''}` : ''}
+${previewError.stack ? `Stack: ${previewError.stack}` : ''}
+${terminalErrorContext ? `\nTerminal Errors:\n${terminalErrorContext}` : ''}
+${codeContext}
+INSTRUCTIONS:
+1. Read the error message and stack trace carefully.
+2. Identify which file(s) contain the bug.
+3. Read the full code of those files above.
+4. Fix ONLY the broken file(s) — do not rewrite files that are working.
+5. Return the complete corrected file(s) using <ryze_artifact> format.
+6. Common fixes: add missing imports, fix undefined variables, initialize arrays with [], add optional chaining ?., fix component export names.`;
 
-Stack Trace:
-${previewError.stack || 'No stack trace available'}
-${terminalErrorContext ? `\nRecent Terminal Errors:\n${terminalErrorContext}` : ''}
-
-Please analyze the error and FIX the code.
-- If a component is missing, define it.
-- If an import is wrong, fix it.
-- If there is a logic error, correct it.
-- Pay attention to the file and line number to locate the exact issue.
-
-Return the corrected code.`;
-
-        // Trigger the fix
+        // Use 'chat' mode explicitly to prevent full regeneration
         if (handleSendRef.current) {
-            handleSendRef.current(fixPrompt);
+            handleSendRef.current(fixPrompt, 'chat');
         }
     };
 

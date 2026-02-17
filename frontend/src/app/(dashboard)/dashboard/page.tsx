@@ -81,7 +81,7 @@ export default function DashboardPage() {
   }, [router]);
 
   const handleOpenProject = (projectId: string) => {
-    router.push(`/studio?project=${projectId}`);
+    router.push(`/projects/${projectId}`);
   };
 
   const allProjects = projects || [];

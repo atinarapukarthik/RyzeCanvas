@@ -241,7 +241,7 @@ def _write_file(path: str, content: str, *, user_id: str, project_id: str) -> bo
                 file_options={"content-type": content_type},
             )
 
-        logger.info(f"[Storage Write] {path} -> {storage_key}")
+        logger.debug(f"[Storage Write] {path} -> {storage_key}")
         return True
     except Exception as e:
         logger.error(f"[Storage Write FAILED] {path}: {e}")
@@ -416,7 +416,7 @@ def _extract_artifacts(text: str) -> List[List[RyzeAction]]:
     Handles truncated responses by attempting to close tags.
     """
     artifacts = []
-    
+
     # Auto-close truncated artifact tags if necessary
     if "<ryze_artifact" in text and "</ryze_artifact>" not in text:
         text += "</ryze_artifact>"
@@ -431,10 +431,10 @@ def _extract_artifacts(text: str) -> List[List[RyzeAction]]:
 
     for artifact_match in artifact_pattern.finditer(text):
         artifact_content = artifact_match.group(1)
-        
+
         # Auto-close truncated action tags inside the artifact
         if "<ryze_action" in artifact_content and "</ryze_action>" not in artifact_content:
-             artifact_content += "</ryze_action>"
+            artifact_content += "</ryze_action>"
 
         actions = []
 
@@ -751,6 +751,61 @@ def _classify_shell_phase(command: str) -> str:
     return "shell"
 
 
+def _validate_generated_code(artifacts: list) -> list:
+    """
+    Quick static validation of generated code artifacts.
+    Returns list of error descriptions, or empty list if clean.
+    """
+    errors = []
+    for actions in artifacts:
+        for action in actions:
+            if action.type != "file" or not action.path:
+                continue
+            code = action.content
+            path = action.path
+
+            # Check for framer-motion import (banned — breaks preview)
+            if "from 'framer-motion'" in code or 'from "framer-motion"' in code:
+                errors.append(
+                    f"{path}: Uses framer-motion (banned in preview)")
+
+            # Check for Next.js imports (banned)
+            for nx_mod in ("next/link", "next/router", "next/image", "next/navigation"):
+                if f"from '{nx_mod}'" in code or f'from "{nx_mod}"' in code:
+                    errors.append(
+                        f"{path}: Uses Next.js import '{nx_mod}' (not allowed)")
+
+            # Check for missing default export in key .tsx/.jsx files
+            if (path.endswith('.tsx') or path.endswith('.jsx')):
+                if 'export default' not in code and 'export {' not in code:
+                    basename = os.path.basename(path)
+                    if basename in ('App.tsx', 'App.jsx', 'Layout.tsx'):
+                        errors.append(f"{path}: Missing default export")
+
+            # Check for potential .map() on undefined
+            if '.map(' in code:
+                map_matches = re.findall(r'(\w+)\.map\(', code)
+                for var in map_matches:
+                    if var in ('React', 'Object', 'Array', 'children', 'props'):
+                        continue
+                    # Check if the variable is properly defined or has a fallback
+                    has_fallback = (
+                        f'({var} || []).map' in code or
+                        f'{var}?.map' in code or
+                        f'const {var}' in code or
+                        f'let {var}' in code or
+                        f'{var} =' in code or
+                        f'{var}:' in code
+                    )
+                    if not has_fallback:
+                        errors.append(
+                            f"{path}: '{var}.map()' may be called on undefined — "
+                            f"use ({var} || []).map() or {var}?.map()"
+                        )
+
+    return errors
+
+
 PHASE_LABELS = {
     "dependencies": "Setting up dependencies",
     "config": "Writing config files",
@@ -780,16 +835,16 @@ async def _execute_actions_stream(
     Shell actions are intercepted by the virtual terminal.
     """
     total = len(actions)
-    logger.info(f"[_execute_actions] Processing {total} actions.")
+    logger.debug(f"[_execute_actions] Processing {total} actions.")
 
     file_count = sum(1 for a in actions if a.type == "file")
     shell_count = sum(1 for a in actions if a.type == "shell")
-    yield _sse_event(EVENT_STEP, f"Executing {total} actions ({file_count} files, {shell_count} commands)")
+    yield _sse_event(EVENT_STEP, f"Applying {file_count} files and {shell_count} commands")
 
     current_phase = ""
 
     for i, action in enumerate(actions):
-        logger.info(
+        logger.debug(
             f"[_execute_actions] Action {i+1}/{total}: Type={action.type}, Path={action.path}")
 
         if action.type == "file" and action.path:
@@ -800,7 +855,8 @@ async def _execute_actions_stream(
                 phase_label = PHASE_LABELS.get(phase, phase.title())
                 yield _sse_event(EVENT_STEP, f"[{phase_label}]")
 
-            yield _sse_event(EVENT_STEP, f"  Writing: {action.path}")
+            basename = os.path.basename(action.path)
+            yield _sse_event(EVENT_STEP, f"Creating {basename}...")
             success = _write_file(
                 action.path, action.content,
                 user_id=user_id, project_id=project_id,
@@ -827,7 +883,7 @@ async def _execute_actions_stream(
                 phase_label = PHASE_LABELS.get(phase, phase.title())
                 yield _sse_event(EVENT_STEP, f"[{phase_label}]")
 
-            yield _sse_event(EVENT_STEP, f"  $ {command}")
+            yield _sse_event(EVENT_STEP, f"Running: {command}")
 
             result = await _execute_virtual_shell(
                 command, user_id=user_id, project_id=project_id
@@ -852,7 +908,7 @@ async def orchestrate_chat(request: ChatRequest) -> AsyncGenerator[str, None]:
     """
     Main orchestration entry point. Routes to the appropriate handler.
     """
-    logger.info(
+    logger.debug(
         f"Starting orchestration: mode={request.mode}, provider={request.provider}, "
         f"model={request.model}, project_id={request.project_id}, user_id={request.user_id}")
     try:
@@ -900,7 +956,8 @@ async def _handle_chat(llm, request: ChatRequest) -> AsyncGenerator[str, None]:
 
     system_ctx = ""
     if request.existing_code:
-        system_ctx += f"\n\n<current-file-context>\n{request.existing_code[:10000]}\n</current-file-context>"
+        # Allow up to 60k chars so the AI can see the full project files for targeted fixes
+        system_ctx += f"\n\n<current-project-files>\n{request.existing_code[:60000]}\n</current-project-files>"
 
     project_ctx = await _get_project_context(
         user_id=request.user_id or "", project_id=request.project_id or ""
@@ -920,7 +977,8 @@ async def _handle_chat(llm, request: ChatRequest) -> AsyncGenerator[str, None]:
             messages.append(AIMessage(content=msg["content"]))
 
     # Resolve @error_id references in the user prompt
-    resolved_prompt = _resolve_error_references(request.prompt, request.error_context)
+    resolved_prompt = _resolve_error_references(
+        request.prompt, request.error_context)
     messages.append(HumanMessage(content=resolved_prompt))
 
     full_response = ""
@@ -980,7 +1038,7 @@ async def _handle_generate_unified(llm, request: ChatRequest) -> AsyncGenerator[
 
     try:
         chunk_count = 0
-        logger.info(
+        logger.debug(
             f"[_handle_generate_unified] Starting LLM stream for prompt: {request.prompt[:50]}...")
         yield _sse_event(EVENT_STEP, "AI is thinking...")
 
@@ -991,9 +1049,9 @@ async def _handle_generate_unified(llm, request: ChatRequest) -> AsyncGenerator[
                 chunk_count += 1
 
                 if chunk_count % 10 == 0:
-                    yield _sse_event(EVENT_STEP, f"Generating code... ({chunk_count} tokens)")
+                    yield _sse_event(EVENT_STEP, "Generating code...")
 
-        logger.info(
+        logger.debug(
             f"[_handle_generate_unified] Stream complete. Total length: {len(full_response)}")
 
         yield _sse_event(EVENT_STEP, "Generation complete. Analyzing artifacts...")
@@ -1005,7 +1063,7 @@ async def _handle_generate_unified(llm, request: ChatRequest) -> AsyncGenerator[
         return
 
     artifacts = _extract_artifacts(full_response)
-    logger.info(
+    logger.debug(
         f"[_extract_artifacts] Found {len(artifacts)} artifact blocks.")
 
     if not artifacts:
@@ -1023,6 +1081,45 @@ async def _handle_generate_unified(llm, request: ChatRequest) -> AsyncGenerator[
             ):
                 yield event
             count += len(actions)
+
+        # Post-generation validation
+        yield _sse_event(EVENT_STEP, "Checking generated code for errors...")
+        validation_errors = _validate_generated_code(artifacts)
+        if validation_errors:
+            yield _sse_event(EVENT_STEP, f"Found {len(validation_errors)} potential issues. Auto-fixing...")
+            fix_prompt = (
+                "Fix these issues in the generated code:\n"
+                + "\n".join(f"- {e}" for e in validation_errors)
+                + "\n\nReturn ONLY the corrected files using <ryze_artifact> format."
+            )
+            fix_messages = [
+                SystemMessage(content=get_chat_prompt()),
+                HumanMessage(content=fix_prompt),
+            ]
+            try:
+                fix_response = ""
+                async for chunk in llm.astream(fix_messages):
+                    token = chunk.content if hasattr(chunk, "content") else str(chunk)
+                    if token:
+                        fix_response += token
+
+                fix_artifacts = _extract_artifacts(fix_response)
+                if fix_artifacts:
+                    yield _sse_event(EVENT_STEP, "Applying fixes...")
+                    for fix_actions in fix_artifacts:
+                        async for event in _execute_actions_stream(
+                            fix_actions, user_id=uid, project_id=pid
+                        ):
+                            yield event
+                        count += len(fix_actions)
+                    yield _sse_event(EVENT_STEP, "Verification complete — issues fixed")
+                else:
+                    yield _sse_event(EVENT_STEP, "Auto-fix skipped (no artifacts returned)")
+            except Exception as fix_err:
+                logger.warning(f"Auto-fix failed: {fix_err}")
+                yield _sse_event(EVENT_STEP, "Auto-fix skipped (non-critical)")
+        else:
+            yield _sse_event(EVENT_STEP, "Verification complete — no errors detected")
 
         yield _sse_event(EVENT_DONE, {"success": True, "mode": "generate", "actions_count": count})
 
@@ -1243,9 +1340,9 @@ async def _handle_plan_implement(llm, request: ChatRequest) -> AsyncGenerator[st
                 full_response += token
                 chunk_count += 1
                 if chunk_count % 15 == 0:
-                    yield _sse_event(EVENT_STEP, f"Implementing plan... ({chunk_count} tokens)")
+                    yield _sse_event(EVENT_STEP, "Implementing plan...")
 
-        logger.info(
+        logger.debug(
             f"[_handle_plan_implement] Stream complete. Length: {len(full_response)}")
         yield _sse_event(EVENT_STEP, "Implementation complete. Applying artifacts...")
 

@@ -32,7 +32,7 @@ export default function HistoryPage() {
     });
 
     const handleOpen = (projectId: string) => {
-        router.push(`/studio?project=${projectId}`);
+        router.push(`/projects/${projectId}`);
     };
 
     const handleDelete = (e: React.MouseEvent, projectId: string) => {
