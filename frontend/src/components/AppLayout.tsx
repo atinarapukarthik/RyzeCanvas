@@ -18,12 +18,12 @@ export function AppLayout({ children, hideTopNav = false }: AppLayoutProps) {
   const [isVerifying, setIsVerifying] = useState(false);
 
   useEffect(() => {
-    // Verify session with backend on mount
+    // Verify session with backend on mount — skip if already logging out
+    let cancelled = false;
     const verifySession = async () => {
       if (isAuthenticated && !isVerifying) {
         setIsVerifying(true);
         try {
-          // We import the raw fetch directly to avoid circular dependency loops if api.ts imports store
           const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
           const token = localStorage.getItem("token");
           const headers: HeadersInit = { "Content-Type": "application/json" };
@@ -34,20 +34,20 @@ export function AppLayout({ children, hideTopNav = false }: AppLayoutProps) {
             credentials: "include"
           });
 
-          if (!res.ok) {
+          if (!res.ok && !cancelled) {
             console.warn("[AppLayout] Session invalid, logging out");
             logout();
           }
         } catch (e) {
           console.error("[AppLayout] Session verification error:", e);
-          // Optional: don't logout on network error, just let it be
         } finally {
-          setIsVerifying(false);
+          if (!cancelled) setIsVerifying(false);
         }
       }
     };
 
     verifySession();
+    return () => { cancelled = true; };
   }, [isAuthenticated, logout]);
 
   return (

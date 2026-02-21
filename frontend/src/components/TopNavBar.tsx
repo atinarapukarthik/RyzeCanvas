@@ -30,8 +30,12 @@ export function TopNavBar() {
   const isDashboard = pathname === "/dashboard";
 
   const handleLogout = () => {
-    logout();
-    router.push("/login");
+    // Navigate first, then clear auth state.
+    // This avoids the ProtectedRoute rendering a blank screen
+    // while the navigation is still in flight.
+    router.replace("/login");
+    // Small delay so Next.js starts the route transition before state clears
+    setTimeout(() => logout(), 50);
   };
 
   const handleGithubToggle = () => {

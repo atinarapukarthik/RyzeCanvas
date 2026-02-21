@@ -30,8 +30,8 @@ export function AppSidebar() {
   const router = useRouter();
 
   const handleLogout = () => {
-    logout();
-    router.push("/login"); // or just reload/clear cookies
+    router.replace("/login");
+    setTimeout(() => logout(), 50);
   };
 
   return (

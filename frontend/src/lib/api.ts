@@ -357,6 +357,7 @@ export interface ChatStreamOptions {
   existingCode?: string;
   themeContext?: string;
   projectId?: string;
+  errorContext?: { id: string; type: string; message: string; file?: string; line?: number; stack_trace?: string }[];
   onStep?: (step: string) => void;
   onToken?: (token: string) => void;
   onPlan?: (plan: string) => void;
@@ -384,6 +385,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
     prompt, mode, provider, model,
     conversationHistory = [], webSearchContext,
     planAnswers, planData, existingCode, themeContext, projectId,
+    errorContext,
     onStep, onToken, onPlan, onCode, onError, onDone,
     onQuestions, onPlanReady, onInstall, onFileUpdate, onTodo,
     onCommand, onLogAnalysis, onExplanation, onWebSearch,
@@ -405,6 +407,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
     ...(existingCode ? { existing_code: existingCode } : {}),
     ...(themeContext ? { theme_context: themeContext } : {}),
     ...(projectId ? { project_id: projectId } : {}),
+    ...(errorContext ? { error_context: errorContext } : {}),
   };
 
   const res = await fetch(`${API_BASE_URL}/chat/stream`, {

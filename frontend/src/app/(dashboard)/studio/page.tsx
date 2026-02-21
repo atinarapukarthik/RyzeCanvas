@@ -105,7 +105,20 @@ interface ImplementationStatus {
  * When `allFiles` is provided (multi-file project), inlines all component files
  * so cross-file references (e.g. HeroSection imported in App.tsx) resolve at runtime.
  */
-function buildPreviewHtml(code: string, allFiles?: Record<string, string>): string {
+interface PreviewThemeColors {
+    primary?: string;
+    secondary?: string;
+    accent?: string;
+    background?: string;
+    surface?: string;
+    text?: string;
+}
+
+function buildPreviewHtml(
+    code: string,
+    allFiles?: Record<string, string>,
+    themeColors?: PreviewThemeColors
+): string {
     // ── Multi-file Detection & Parsing ──
     let files = allFiles || {};
 
@@ -155,14 +168,14 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         ];
 
         for (const [filePath, fileCode] of Object.entries(files)) {
+            const lowerPath = filePath.toLowerCase();
             if (
                 (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) &&
                 !mainFilePaths.includes(filePath) &&
-                !filePath.includes('main.tsx') &&
-                !filePath.includes('main.jsx') &&
-                !filePath.includes('layout.tsx') &&
-                !filePath.includes('_document.tsx') &&
-                !filePath.includes('_app.tsx') && // Don't inline _app.tsx directly, it's special
+                !lowerPath.includes('main.tsx') &&
+                !lowerPath.includes('main.jsx') &&
+                !lowerPath.includes('_document.tsx') &&
+                !lowerPath.includes('_app.tsx') &&
                 typeof fileCode === 'string' &&
                 (fileCode.includes('function ') || fileCode.includes('const ') || fileCode.includes('export'))
             ) {
@@ -184,6 +197,14 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
             code;
 
         if (componentFiles.length > 0) {
+            // Sort: Layout-like files first so they are defined before App uses them
+            componentFiles.sort((a, b) => {
+                const aIsLayout = a.path.toLowerCase().includes('layout');
+                const bIsLayout = b.path.toLowerCase().includes('layout');
+                if (aIsLayout && !bIsLayout) return -1;
+                if (!aIsLayout && bIsLayout) return 1;
+                return 0;
+            });
             const parts = componentFiles.map((f) => f.code);
             parts.push(mainFile);
             mergedCode = parts.join('\n\n');
@@ -221,10 +242,18 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         if (fnM) { componentName = fnM[1]; break; }
         const constM = lines[i].match(/export\s+default\s+(\w+)\s*;?\s*$/);
         if (constM) { componentName = constM[1]; break; }
+        const classM = lines[i].match(/export\s+default\s+class\s+(\w+)/);
+        if (classM) { componentName = classM[1]; break; }
     }
     if (componentName === 'App') {
-        const standaloneFn = mergedCode.match(/^function\s+(\w+)/m);
-        if (standaloneFn) componentName = standaloneFn[1];
+        // Try arrow function / const component: const App = () => ...
+        const arrowFn = mergedCode.match(/(?:export\s+)?const\s+(App|Home|Page|Main)\s*(?::\s*React\.FC)?\s*=/);
+        if (arrowFn) {
+            componentName = arrowFn[1];
+        } else {
+            const standaloneFn = mergedCode.match(/^function\s+(\w+)/m);
+            if (standaloneFn) componentName = standaloneFn[1];
+        }
     }
 
     // Clean code for browser execution:
@@ -270,16 +299,59 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         .replace(/^\s*export\s+(function|const|let|var|class)\s+/gm, '$1 ')
         // ── TypeScript pre-stripping (safety net before Babel) ──
         // Remove `type X = ...` and `interface X { ... }` declarations entirely
-        .replace(/^\s*(?:export\s+)?type\s+\w+(?:<[^>]*>)?\s*=\s*[^;]*;?\s*$/gm, '')
-        .replace(/^\s*(?:export\s+)?interface\s+\w+(?:\s+extends\s+\w+)?(?:<[^>]*>)?\s*\{[^}]*\}\s*$/gm, '')
+        // Handle MULTI-LINE type aliases: `type X = { ... };` spanning multiple lines
+        .replace(/^\s*(?:export\s+)?type\s+\w+(?:<[^>]*>)?\s*=\s*\{[\s\S]*?\};?\s*$/gm, '')
+        // Single-line type aliases
+        .replace(/^\s*(?:export\s+)?type\s+\w+(?:<[^>]*>)?\s*=\s*[^;{]*;?\s*$/gm, '')
+        // Handle MULTI-LINE interfaces: `interface X { ... }` spanning multiple lines
+        .replace(/^\s*(?:export\s+)?interface\s+\w+(?:\s+extends\s+[\w,\s]+)?(?:<[^>]*>)?\s*\{[\s\S]*?\}\s*$/gm, '')
+        // Remove "use client" / "use server" directives (Next.js only)
+        .replace(/^\s*["']use (?:client|server)["'];?\s*$/gm, '')
         // Remove type annotations from variable declarations: `const x: Type = ...` → `const x = ...`
-        .replace(/(?<=[(\s,])(\w+)\s*:\s*(?:string|number|boolean|any|void|null|undefined|never|unknown|object|React\.\w+|Array<[^>]*>|Record<[^>]*>|\w+(?:\[\])?)\s*(?=[=,)\n])/g, '$1 ')
+        .replace(/(?<=[(\s,])(\w+)\s*:\s*(?:string|number|boolean|any|void|null|undefined|never|unknown|object|React\.\w+(?:<[^>]*>)?|Array<[^>]*>|Record<[^>]*>|Partial<[^>]*>|Omit<[^>]*>|Pick<[^>]*>|\w+(?:\[\])?)\s*(?=[=,)\n])/g, '$1 ')
+        // Remove full type annotations on function params including inline object types: 
+        // `(props: { title: string; onClick: () => void })` → `(props)`
+        .replace(/(\w+)\s*:\s*\{[^}]*\}/g, '$1')
+        // Remove generic type parameters from function declarations: function foo<T>(...) → function foo(...)
+        .replace(/<[A-Z]\w*(?:\s+extends\s+[^>]+)?(?:\s*,\s*[A-Z]\w*(?:\s+extends\s+[^>]+)?)*>\s*(?=\()/g, '')
         // Remove generic type parameters from function calls: fn<Type>(...) → fn(...)
         .replace(/(?<=\w)<(?:string|number|boolean|any|[A-Z]\w*)(?:\s*,\s*(?:string|number|boolean|any|[A-Z]\w*))*>\s*(?=\()/g, '')
-        // Remove `as Type` type assertions
-        .replace(/\s+as\s+(?:const|string|number|boolean|any|unknown|\w+(?:\[\])?)\b/g, '')
+        // Remove `as Type` type assertions (including complex ones like `as const`)
+        .replace(/\s+as\s+(?:const|string|number|boolean|any|unknown|\w+(?:<[^>]*>)?(?:\[\])?)\b/g, '')
+        // Remove React.FC<...> type annotation: `const App: React.FC<Props> = ` → `const App = `
+        .replace(/:\s*React\.FC(?:<[^>]*>)?\s*(?==)/g, ' ')
+        // Remove `: Props` type annotations on const arrow function components
+        .replace(/:\s*(?:React\.)?(?:FC|FunctionComponent|ComponentProps|HTMLAttributes)(?:<[^>]*>)?\s*(?==)/g, ' ')
+        // Remove return type annotations on functions: `function foo(): Type {` → `function foo() {`
+        .replace(/\)\s*:\s*(?:void|string|number|boolean|any|null|undefined|never|unknown|React\.(?:ReactNode|ReactElement|JSX\.Element)|JSX\.Element|\w+(?:<[^>]*>)?(?:\[\])?)\s*(?=\{)/g, ') ')
+        // Remove return type annotations: `): Promise<Type>` → `)`
+        .replace(/\)\s*:\s*Promise<[^>]*>\s*(?=\{)/g, ') ')
+        // Remove type parameters on useState/useRef: `useState<Type>(` → `useState(`
+        .replace(/(?<=useState|useRef|useCallback|useMemo|useContext|useReducer)<[^>]+>/g, '')
+        // Remove non-null assertions: `value!.prop` → `value.prop`, `value!` → `value`
+        .replace(/!(?=\.|\[|\))/g, '')
+        // Remove `satisfies Type` expressions
+        .replace(/\s+satisfies\s+\w+(?:<[^>]*>)?/g, '')
+        // Remove `readonly` modifier from properties
+        .replace(/\breadonly\s+(?=\w)/g, '')
+        // Remove `keyof typeof` expressions
+        .replace(/\bkeyof\s+typeof\s+\w+/g, 'string')
+        // Remove `is Type` type predicates in function returns: `): value is Type {` → `) {`
+        .replace(/\)\s*:\s*\w+\s+is\s+\w+(?:<[^>]*>)?\s*(?=\{)/g, ') ')
+        // Remove enum declarations and replace with const objects
+        .replace(/^\s*(?:export\s+)?(?:const\s+)?enum\s+(\w+)\s*\{([^}]*)\}/gm, (_, name, body) => {
+            const entries = body.split(',').map((e: string) => {
+                const trimmed = e.trim();
+                if (!trimmed) return '';
+                const parts = trimmed.split('=');
+                const key = parts[0].trim();
+                const val = parts.length > 1 ? parts[1].trim() : `'${key}'`;
+                return `${key}: ${val}`;
+            }).filter(Boolean).join(', ');
+            return `const ${name} = { ${entries} };`;
+        })
         // Remove standalone `type` imports that might have been partially stripped
-        .replace(/^\s*import\s+type\b[^;]*;?\s*$/gm, '');
+        .replace(/^\s*import\s+type\b[^;]*;?\s*$/gm, '')
 
     // Scan user code for declared names to avoid duplicate identifier errors with icon stubs
     const declaredNames = new Set<string>();
@@ -311,17 +383,30 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         'Edit2', 'Edit3', 'Save', 'FilePlus', 'FolderPlus', 'FolderOpen',
         'ChevronFirst', 'ChevronLast', 'ChevronsUpDown', 'ArrowUpDown',
     ];
-    const safeIcons = allIconNames.filter(name => !declaredNames.has(name));
+    // Exclude icon names that clash with inline stubs (e.g., Link from react-router-dom, Navigate, etc.)
+    const inlineStubNames = new Set([
+        'Link', 'NavLink', 'Navigate', 'Outlet', 'Route', 'Routes', 'Router',
+        'BrowserRouter', 'HashRouter', 'MemoryRouter',
+    ]);
+    const safeIcons = allIconNames.filter(name => !declaredNames.has(name) && !inlineStubNames.has(name));
     const iconDestructuring = safeIcons.length > 0
         ? `const { ${safeIcons.join(', ')} } = lucideReact;`
         : '// All icon names conflict with user code — icons available via lucideReact proxy';
 
     const reactGlobals = new Set(['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'createContext', 'useReducer', 'useId', 'Fragment', 'forwardRef', 'memo', 'Suspense']);
 
-    // Libraries we provide via CDN and shouldn't stub out
+    // Libraries we provide via CDN or inline stubs — don't generate generic stubs
     const cdnProvided = new Set([
         'clsx',
-        'useForm', 'useController', 'useFieldArray', 'useWatch', 'FormProvider', 'useFormContext'
+        'useForm', 'useController', 'useFieldArray', 'useWatch', 'FormProvider', 'useFormContext',
+        // react-router-dom (stubbed inline)
+        'BrowserRouter', 'HashRouter', 'MemoryRouter', 'Router', 'Routes', 'Route',
+        'Link', 'NavLink', 'Navigate', 'Outlet',
+        'useNavigate', 'useLocation', 'useParams', 'useSearchParams', 'useMatch', 'useRoutes',
+        // framer-motion (stubbed inline)
+        'motion', 'AnimatePresence',
+        // axios, socket.io (stubbed inline)
+        'axios', 'io',
     ]);
 
     const stubsToGenerate = Array.from(importedNames).filter(n =>
@@ -330,9 +415,37 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         !declaredNames.has(n) &&
         !cdnProvided.has(n)
     );
+    // Hook-aware stubs: names starting with "use" get function stubs, not component stubs
     const importStubs = stubsToGenerate.length > 0
-        ? stubsToGenerate.map(n => `const ${n} = React.forwardRef((props, ref) => React.createElement('div', { ...props, ref }, props.children));`).join('\n')
+        ? stubsToGenerate.map(n => {
+            if (n.startsWith('use')) {
+                return `const ${n} = (...args) => { const [s, ss] = React.useState(args[0]); return typeof args[0] === 'undefined' ? [s, ss] : s; };`;
+            }
+            return `const ${n} = React.forwardRef((props, ref) => React.createElement('div', { ...props, ref }, props.children));`;
+        }).join('\n')
         : '';
+
+    // Extract CSS from generated files and inject into the preview
+    let inlineCss = '';
+    if (files && Object.keys(files).length > 0) {
+        for (const [filePath, fileCode] of Object.entries(files)) {
+            if (filePath.endsWith('.css') && typeof fileCode === 'string') {
+                // Strip Tailwind directives that are already handled by the CDN
+                const strippedCss = fileCode
+                    .replace(/@tailwind\s+\w+;?\s*/g, '')
+                    .replace(/@import\s+[^;]+;?\s*/g, '')
+                    .replace(/@apply\s+([^;]+);/g, (_, classes) => {
+                        // Convert simple @apply to approximate inline styles
+                        // This is a best-effort conversion for preview
+                        return `/* @apply ${classes} */`;
+                    })
+                    .trim();
+                if (strippedCss) {
+                    inlineCss += `\n/* === ${filePath} === */\n${strippedCss}\n`;
+                }
+            }
+        }
+    }
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -340,19 +453,127 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/clsx/dist/clsx.min.js"></script>
-    <script src="https://unpkg.com/react-hook-form@7/dist/index.umd.js"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/clsx/dist/clsx.min.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/react-hook-form@7/dist/index.umd.js" crossorigin="anonymous"></script>
+    ${(() => {
+            // Extract Google Fonts from generated index.html if present
+            const indexHtml = files?.['index.html'] || '';
+            const fontLinks = indexHtml.match(/<link[^>]*fonts\.googleapis\.com[^>]*>/gi) || [];
+            // Also check the font from theme
+            const themeFont = themeColors ? (() => {
+                // Common font mappings to Google Fonts URLs
+                const fontMap: Record<string, string> = {
+                    'inter': 'Inter:wght@300;400;500;600;700',
+                    'poppins': 'Poppins:wght@300;400;500;600;700',
+                    'jetbrains mono': 'JetBrains+Mono:wght@300;400;500;600;700',
+                    'merriweather': 'Merriweather:wght@300;400;700',
+                    'plus jakarta sans': 'Plus+Jakarta+Sans:wght@300;400;500;600;700',
+                    'roboto': 'Roboto:wght@300;400;500;700',
+                    'open sans': 'Open+Sans:wght@300;400;500;600;700',
+                    'montserrat': 'Montserrat:wght@300;400;500;600;700',
+                    'lato': 'Lato:wght@300;400;700',
+                    'raleway': 'Raleway:wght@300;400;500;600;700',
+                    'nunito': 'Nunito:wght@300;400;500;600;700',
+                    'playfair display': 'Playfair+Display:wght@400;500;600;700',
+                    'source code pro': 'Source+Code+Pro:wght@300;400;500;600;700',
+                    'fira code': 'Fira+Code:wght@300;400;500;600;700',
+                    'space grotesk': 'Space+Grotesk:wght@300;400;500;600;700',
+                };
+                return fontMap;
+            })() : null;
+            return fontLinks.join('\n    ') + (fontLinks.length === 0 && themeFont ? '' : '');
+        })()}
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&family=Merriweather:wght@300;400;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
     <style>
-        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        body { margin: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         #root { min-height: 100vh; }
+        /* Custom animation keyframes for AI-generated code */
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideInLeft { from { opacity: 0; transform: translateX(-30px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes slideInRight { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        @keyframes gradient { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        @keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-10px); } }
+        @keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 5px rgba(99,102,241,0.3); } 50% { box-shadow: 0 0 20px rgba(99,102,241,0.6); } }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+        .animate-fadeIn { animation: fadeIn 0.6s ease-out forwards; }
+        .animate-slideUp { animation: slideUp 0.8s ease-out forwards; }
+        .animate-slideDown { animation: slideDown 0.6s ease-out forwards; }
+        .animate-slideInLeft { animation: slideInLeft 0.6s ease-out forwards; }
+        .animate-slideInRight { animation: slideInRight 0.6s ease-out forwards; }
+        .animate-scaleIn { animation: scaleIn 0.5s ease-out forwards; }
+        .animate-gradient { animation: gradient 6s ease infinite; background-size: 200% 200%; }
+        .animate-float { animation: float 3s ease-in-out infinite; }
+        .animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+        .animate-shimmer { animation: shimmer 2s linear infinite; background-size: 200% 100%; }
+        /* Smooth scroll */
+        html { scroll-behavior: smooth; }
+        /* Glow utility */
+        .glow { filter: drop-shadow(0 0 10px currentColor); }
+        ${inlineCss}
     </style>
     <script>
-        tailwind.config = {
-            theme: { extend: {} }
-        }
+        if (typeof tailwind !== 'undefined') { tailwind.config = {
+            safelist: [
+                {pattern: /bg-theme-(primary|secondary|accent|background|surface|text)/},
+                {pattern: /text-theme-(primary|secondary|accent|background|surface|text)/},
+                {pattern: /border-theme-(primary|secondary|accent|background|surface|text)/},
+                {pattern: /ring-theme-(primary|secondary|accent)/},
+                {pattern: /from-theme-(primary|secondary|accent)/},
+                {pattern: /to-theme-(primary|secondary|accent)/},
+                {pattern: /via-theme-(primary|secondary|accent)/},
+                {pattern: /shadow-theme-(primary|secondary|accent)/},
+                {pattern: /animate-(fadeIn|slideUp|slideDown|slideInLeft|slideInRight|scaleIn|gradient|float|pulse-glow|shimmer)/},
+                'backdrop-blur-xl', 'backdrop-blur-lg', 'backdrop-blur-md',
+                'font-sans', 'font-mono', 'font-serif', 'font-display', 'font-jakarta',
+            ],
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                        serif: ['Merriweather', 'serif'],
+                        display: ['Poppins', 'sans-serif'],
+                        jakarta: ['Plus Jakarta Sans', 'sans-serif'],
+                    },
+                    ${themeColors ? `colors: {
+                        theme: {
+                            primary: '${themeColors.primary || '#6366f1'}',
+                            secondary: '${themeColors.secondary || '#8b5cf6'}',
+                            accent: '${themeColors.accent || '#06b6d4'}',
+                            background: '${themeColors.background || '#09090b'}',
+                            surface: '${themeColors.surface || '#18181b'}',
+                            text: '${themeColors.text || '#fafafa'}',
+                        },` : 'colors: {'}
+                    },
+                    animation: {
+                        'fadeIn': 'fadeIn 0.6s ease-out forwards',
+                        'slideUp': 'slideUp 0.8s ease-out forwards',
+                        'slideDown': 'slideDown 0.6s ease-out forwards',
+                        'slideInLeft': 'slideInLeft 0.6s ease-out forwards',
+                        'slideInRight': 'slideInRight 0.6s ease-out forwards',
+                        'scaleIn': 'scaleIn 0.5s ease-out forwards',
+                        'gradient': 'gradient 6s ease infinite',
+                        'float': 'float 3s ease-in-out infinite',
+                        'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
+                        'shimmer': 'shimmer 2s linear infinite',
+                    },
+                    keyframes: {
+                        fadeIn: { from: { opacity: 0, transform: 'translateY(10px)' }, to: { opacity: 1, transform: 'translateY(0)' } },
+                        slideUp: { from: { opacity: 0, transform: 'translateY(30px)' }, to: { opacity: 1, transform: 'translateY(0)' } },
+                        gradient: { '0%': { backgroundPosition: '0% 50%' }, '50%': { backgroundPosition: '100% 50%' }, '100%': { backgroundPosition: '0% 50%' } },
+                        float: { '0%, 100%': { transform: 'translateY(0px)' }, '50%': { transform: 'translateY(-10px)' } },
+                    },
+                },
+            },
+        }; }
     </script>
     <script>
         // Intercept navigation to prevent recursive app loading
@@ -411,7 +632,7 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
 </head>
 <body>
     <div id="root"></div>
-    <script type="text/babel" data-type="module" data-presets="env,react,typescript">
+    <script type="text/plain" id="app-code">
         const { useState, useEffect, useRef, useMemo, useCallback, useContext, createContext,
                 useReducer, useId, Fragment, forwardRef, memo, Suspense } = React;
 
@@ -423,19 +644,69 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         const clsx = window.clsx;
         const { useForm, useController, useFieldArray, useWatch, FormProvider, useFormContext } = window.ReactHookForm || {};
 
-        // Stub for lucide-react icons — render simple SVG placeholders
+        // Stub for lucide-react icons — render proper SVG outlines for common icons
+        const lucideIconPaths = {
+            Menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
+            X: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+            ChevronDown: '<polyline points="6 9 12 15 18 9"/>',
+            ChevronRight: '<polyline points="9 18 15 12 9 6"/>',
+            ChevronLeft: '<polyline points="15 18 9 12 15 6"/>',
+            ChevronUp: '<polyline points="18 15 12 9 6 15"/>',
+            Search: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+            Heart: '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>',
+            Star: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+            ShoppingCart: '<circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>',
+            User: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+            Bell: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
+            Settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+            Mail: '<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>',
+            Phone: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
+            MapPin: '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
+            Check: '<polyline points="20 6 9 17 4 12"/>',
+            Plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+            Minus: '<line x1="5" y1="12" x2="19" y2="12"/>',
+            ArrowRight: '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
+            ArrowLeft: '<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>',
+            ExternalLink: '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
+            Home: '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+            Zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+            Award: '<circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>',
+            TrendingUp: '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>',
+            Globe: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+            Code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+            Shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+            Eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+            Lock: '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+            CheckCircle: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
+            Play: '<polygon points="5 3 19 12 5 21 5 3"/>',
+            Send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
+            Filter: '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
+            BarChart: '<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>',
+            Clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+            Calendar: '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+            Download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+            Upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+            Loader2: '<line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/>',
+            DollarSign: '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+            CreditCard: '<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
+            Users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+        };
         const iconHandler = {
             get(target, prop) {
                 if (prop === '__esModule') return false;
                 return function LucideIcon(props) {
                     const size = props?.size || 24;
-                    return React.createElement('svg', {
+                    const pathData = lucideIconPaths[prop] || '<circle cx="12" cy="12" r="10"/>';
+                    const svgEl = React.createElement('svg', {
                         width: size, height: size, viewBox: '0 0 24 24',
                         fill: 'none', stroke: 'currentColor', strokeWidth: 2,
                         strokeLinecap: 'round', strokeLinejoin: 'round',
                         className: props?.className || '',
-                        ...props,
-                    }, React.createElement('circle', { cx: 12, cy: 12, r: 10 }));
+                        style: props?.style,
+                        onClick: props?.onClick,
+                        dangerouslySetInnerHTML: { __html: pathData },
+                    });
+                    return svgEl;
                 };
             }
         };
@@ -472,6 +743,115 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         if (typeof feature === 'undefined') {
             var feature = { title: 'Feature', description: 'Description' };
         }
+        // Additional common variable stubs for AI-generated code
+        if (typeof primary === 'undefined') {
+            var primary = true;
+        }
+        if (typeof isPrimary === 'undefined') {
+            var isPrimary = true;
+        }
+        if (typeof name === 'undefined') {
+            var name = 'Name';
+        }
+        if (typeof label === 'undefined') {
+            var label = 'Label';
+        }
+        if (typeof title === 'undefined') {
+            var title = 'Title';
+        }
+        if (typeof description === 'undefined') {
+            var description = 'Description';
+        }
+        if (typeof value === 'undefined') {
+            var value = '';
+        }
+        if (typeof data === 'undefined') {
+            var data = [];
+        }
+        if (typeof items === 'undefined') {
+            var items = [];
+        }
+        if (typeof index === 'undefined') {
+            var index = 0;
+        }
+        if (typeof image === 'undefined') {
+            var image = 'https://placehold.co/400x300';
+        }
+        if (typeof href === 'undefined') {
+            var href = '#';
+        }
+        if (typeof color === 'undefined') {
+            var color = '#6366f1';
+        }
+        if (typeof type === 'undefined') {
+            var type = 'default';
+        }
+        if (typeof size === 'undefined') {
+            var size = 'md';
+        }
+        if (typeof active === 'undefined') {
+            var active = false;
+        }
+        if (typeof isActive === 'undefined') {
+            var isActive = false;
+        }
+        if (typeof open === 'undefined') {
+            var open = false;
+        }
+        if (typeof isOpen === 'undefined') {
+            var isOpen = false;
+        }
+        if (typeof selected === 'undefined') {
+            var selected = null;
+        }
+        if (typeof loading === 'undefined') {
+            var loading = false;
+        }
+        if (typeof isLoading === 'undefined') {
+            var isLoading = false;
+        }
+        if (typeof error === 'undefined') {
+            var error = null;
+        }
+        if (typeof className === 'undefined') {
+            var className = '';
+        }
+        if (typeof variant === 'undefined') {
+            var variant = 'default';
+        }
+        if (typeof plan === 'undefined') {
+            var plan = { name: 'Plan', price: '$0', features: [] };
+        }
+        if (typeof testimonial === 'undefined') {
+            var testimonial = { text: 'Great product!', author: 'User', role: 'Customer' };
+        }
+        if (typeof rating === 'undefined') {
+            var rating = 5;
+        }
+        if (typeof count === 'undefined') {
+            var count = 0;
+        }
+        if (typeof total === 'undefined') {
+            var total = 0;
+        }
+        if (typeof category === 'undefined') {
+            var category = 'General';
+        }
+        if (typeof product === 'undefined') {
+            var product = { name: 'Product', price: '$0.00', image: 'https://placehold.co/200x200' };
+        }
+        if (typeof handleClick === 'undefined') {
+            var handleClick = () => {};
+        }
+        if (typeof onClick === 'undefined') {
+            var onClick = () => {};
+        }
+        if (typeof onChange === 'undefined') {
+            var onChange = () => {};
+        }
+        if (typeof onSubmit === 'undefined') {
+            var onSubmit = (e) => { if (e && e.preventDefault) e.preventDefault(); };
+        }
 
         // Stub for common UI component libraries (framer-motion, etc.)
         const motion = new Proxy({}, {
@@ -484,9 +864,101 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
         });
         const AnimatePresence = ({ children }) => children;
 
+        // ── react-router-dom stub (hash-based routing for preview) ──
+        const __RouterContext__ = React.createContext({ path: '/', navigate: () => {}, params: {} });
+        function BrowserRouter({ children }) {
+            const [path, setPath] = React.useState(window.location.hash.slice(1) || '/');
+            React.useEffect(() => {
+                const onHash = () => setPath(window.location.hash.slice(1) || '/');
+                window.addEventListener('hashchange', onHash);
+                return () => window.removeEventListener('hashchange', onHash);
+            }, []);
+            const navigate = React.useCallback((to) => {
+                if (typeof to === 'number') { window.history.go(to); return; }
+                window.location.hash = to;
+            }, []);
+            return React.createElement(__RouterContext__.Provider, { value: { path, navigate, params: {} } }, children);
+        }
+        const HashRouter = BrowserRouter;
+        const MemoryRouter = BrowserRouter;
+        const Router = BrowserRouter;
+        function Routes({ children }) {
+            const { path } = React.useContext(__RouterContext__);
+            const childArray = React.Children.toArray(children);
+            for (const child of childArray) {
+                if (child?.props?.index && path === '/') return child.props.element || child.props.children || null;
+                if (child?.props?.path) {
+                    const routePath = child.props.path;
+                    if (routePath === '*' || routePath === path || path.startsWith(routePath + '/') || routePath === '/') {
+                        if (routePath === '/' && path !== '/' && !child.props.index) continue;
+                        return child.props.element || child.props.children || null;
+                    }
+                }
+            }
+            // Fallback: try wildcard or first route
+            const wildcard = childArray.find(c => c?.props?.path === '*');
+            if (wildcard) return wildcard.props.element || wildcard.props.children || null;
+            if (childArray.length > 0) return childArray[0].props?.element || childArray[0].props?.children || null;
+            return null;
+        }
+        function Route({ element, children }) { return element || children || null; }
+        function Link({ to, children, className, style, onClick, ...rest }) {
+            return React.createElement('a', {
+                href: '#' + (to || '/'), className, style, ...rest,
+                onClick: (e) => { if (onClick) onClick(e); }
+            }, children);
+        }
+        function NavLink({ to, children, className, style, ...rest }) {
+            const { path } = React.useContext(__RouterContext__);
+            const isActive = path === to || (to !== '/' && path.startsWith(to));
+            const cls = typeof className === 'function' ? className({ isActive }) : className;
+            const stl = typeof style === 'function' ? style({ isActive }) : style;
+            return React.createElement(Link, { to, className: cls, style: stl, ...rest }, children);
+        }
+        function Navigate({ to }) {
+            const { navigate } = React.useContext(__RouterContext__);
+            React.useEffect(() => { if (to) navigate(to); }, [to]);
+            return null;
+        }
+        function Outlet() { return null; }
+        function useNavigate() { return React.useContext(__RouterContext__).navigate; }
+        function useLocation() {
+            const { path } = React.useContext(__RouterContext__);
+            return { pathname: path, search: '', hash: '', state: null, key: 'default' };
+        }
+        function useParams() { return React.useContext(__RouterContext__).params; }
+        function useSearchParams() { return [new URLSearchParams(), () => {}]; }
+        function useMatch() { return null; }
+        function useRoutes(routes) { return null; }
+
+        // ── Common library stubs ──
+        // axios
+        const __mockResponse__ = { data: {}, status: 200, headers: {} };
+        const __mockPromise__ = Promise.resolve(__mockResponse__);
+        const axios = { get: () => __mockPromise__, post: () => __mockPromise__, put: () => __mockPromise__, delete: () => __mockPromise__, patch: () => __mockPromise__, create: () => axios, defaults: { headers: { common: {} } }, interceptors: { request: { use: () => {} }, response: { use: () => {} } } };
+        // socket.io-client
+        const io = () => ({ on: () => {}, emit: () => {}, off: () => {}, disconnect: () => {}, connect: () => {}, connected: false });
+
         ${codeWithoutImports}
 
-        const AppComponent = typeof __DefaultExport__ !== 'undefined' ? __DefaultExport__ : ${componentName};
+        // Resolve the root component to mount. Priority:
+        // 1. __DefaultExport__ (set by stripping "export default <expr>")
+        // 2. The detected componentName from the source
+        // 3. Common fallback names: App, Home, Page, Main
+        // 4. The first defined function component we can find
+        const __resolveAppComponent__ = () => {
+            if (typeof __DefaultExport__ !== 'undefined') return __DefaultExport__;
+            if (typeof ${componentName} !== 'undefined') return ${componentName};
+            if (typeof App !== 'undefined') return App;
+            if (typeof Home !== 'undefined') return Home;
+            if (typeof Page !== 'undefined') return Page;
+            if (typeof Main !== 'undefined') return Main;
+            // Last resort: render a meaningful error
+            return () => React.createElement('div', {
+                style: { padding: 40, textAlign: 'center', color: '#888', fontFamily: 'sans-serif' }
+            }, 'No root component found. Make sure your code has an export default.');
+        };
+        const AppComponent = __resolveAppComponent__();
         const container = document.getElementById('root');
         
         // Robust mounting that supports both React 18 and legacy versions
@@ -499,11 +971,99 @@ function buildPreviewHtml(code: string, allFiles?: Record<string, string>): stri
             }
         } catch (err) {
             console.error('Mount error:', err);
-            // Fallback for very old React versions or edge cases
+            // Report the detailed error to parent — this bypasses cross-origin "Script error."
+            // because we catch it directly in the same-origin script context.
+            window.parent.postMessage({
+                type: 'preview-error',
+                error: {
+                    message: err?.message || String(err),
+                    stack: err?.stack,
+                    source: 'app-mount',
+                }
+            }, '*');
             if (container) {
                 container.innerHTML = '<div style="color:red;padding:20px">Failed to mount application. See console for details.</div>';
             }
         }
+    </script>
+
+    <!-- Programmatic Babel transform with error recovery -->
+    <script>
+    (function() {
+        var codeEl = document.getElementById('app-code');
+        if (!codeEl) return;
+        var code = codeEl.textContent;
+
+        // Aggressive TypeScript cleanup for Babel recovery
+        function aggressiveStrip(src) {
+            return src
+                // Remove function return types: ): Type { → ) {
+                .replace(/\\)\\s*:\\s*[A-Z][\\w.]*(?:<[^>]*>)?(?:\\[\\])?\\s*(?=\\{)/g, ') ')
+                .replace(/\\)\\s*:\\s*(?:void|string|number|boolean|any|null|undefined|never|unknown)\\s*(?=\\{)/g, ') ')
+                .replace(/\\)\\s*:\\s*Promise<[^>]*>\\s*(?=\\{)/g, ') ')
+                // Remove parameter type annotations: (x: Type) → (x)
+                .replace(/(\\w+)\\s*:\\s*(?:string|number|boolean|any|void|null|undefined|never|unknown|object)(?:\\[\\])?/g, '$1')
+                .replace(/(\\w+)\\s*:\\s*[A-Z]\\w*(?:<[^>]*>)?(?:\\[\\])?(?=\\s*[,)=])/g, '$1')
+                // Remove remaining generic brackets on functions
+                .replace(/<[A-Z]\\w*(?:\\s+extends\\s+[^>]+)?(?:\\s*,\\s*[A-Z]\\w*(?:\\s+extends\\s+[^>]+)?)*>\\s*(?=\\()/g, '')
+                // Remove as expressions
+                .replace(/\\s+as\\s+(?:const|string|number|boolean|any|unknown|\\w+(?:<[^>]*>)?(?:\\[\\])?)\\b/g, '')
+                // Remove satisfies
+                .replace(/\\s+satisfies\\s+\\w+(?:<[^>]*>)?/g, '')
+                // Remove non-null assertions
+                .replace(/!(?=\\.|\\[|\\))/g, '')
+                // Remove remaining standalone type/interface blocks
+                .replace(/^\\s*(?:export\\s+)?type\\s+\\w+[^=]*=\\s*[^;]*;?\\s*$/gm, '')
+                .replace(/^\\s*(?:export\\s+)?interface\\s+\\w+[\\s\\S]*?\\}\\s*$/gm, '');
+        }
+
+        function tryTransform(src, label) {
+            try {
+                var result = Babel.transform(src, {
+                    presets: ['env', 'react', 'typescript'],
+                    filename: 'app.tsx',
+                });
+                return result.code;
+            } catch (e) {
+                console.warn('[Babel ' + label + ']', e.message);
+                return null;
+            }
+        }
+
+        // Attempt 1: Direct transform
+        var compiled = tryTransform(code, 'attempt 1');
+
+        // Attempt 2: Aggressive TS stripping then retry
+        if (!compiled) {
+            console.warn('[Preview] Babel failed on original code. Attempting aggressive TS cleanup...');
+            var cleaned = aggressiveStrip(code);
+            compiled = tryTransform(cleaned, 'attempt 2 (stripped)');
+        }
+
+        if (compiled) {
+            try {
+                (0, eval)(compiled);
+            } catch (e) {
+                console.error('[Preview] Runtime error after Babel compile:', e);
+                window.parent.postMessage({
+                    type: 'preview-error',
+                    error: { message: e.message, stack: e.stack, source: 'app-runtime' }
+                }, '*');
+            }
+        } else {
+            // Both attempts failed — report the error
+            var errorMsg = 'Babel could not compile the generated code after cleanup attempts.';
+            console.error('[Preview]', errorMsg);
+            window.parent.postMessage({
+                type: 'preview-error',
+                error: { message: errorMsg, source: 'babel-compile' }
+            }, '*');
+            var container = document.getElementById('root');
+            if (container) {
+                container.innerHTML = '<div style="color:#ff6b6b;padding:20px;font-family:monospace;">Compilation Error: TypeScript syntax could not be processed. The AI will attempt to fix this automatically.</div>';
+            }
+        }
+    })();
     </script>
 
 </body>
@@ -724,7 +1284,9 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
     const [previewError, setPreviewError] = useState<{ message: string; stack?: string; source?: string; line?: number; column?: number } | null>(null);
     const [errorModalOpen, setErrorModalOpen] = useState(false);
     const [autoFixAttempts, setAutoFixAttempts] = useState(0);
+    const autoFixAttemptsRef = useRef(0);
     const [isAutoFixing, setIsAutoFixing] = useState(false);
+    const isAutoFixingRef = useRef(false);
     const autoFixTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [archivesModalOpen, setArchivesModalOpen] = useState(false);
     const [archivedChats, setArchivedChats] = useState<ArchivedChat[]>([]);
@@ -733,9 +1295,53 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
     const chatEndRef = useRef<HTMLDivElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const streamingMessageRef = useRef<string>('');
+    const generatingRef = useRef(false);
     const initialPromptSentRef = useRef<boolean>(false);
+    const initialPromptFiredRef = useRef<boolean>(false);
     const handleSendRef = useRef<((msg?: string, mode?: "plan" | "build" | "chat") => Promise<void>) | null>(null);
     const routeSearchRef = useRef<HTMLDivElement>(null);
+
+    // ── Performance: keep `messages` in a ref so `handleSend` doesn't need it as
+    // a dependency. `handleSend` only reads messages to build conversationHistory,
+    // so a ref (always-current snapshot) avoids recreating the 600-line callback
+    // on every single message state update (which happens every 60ms during streaming).
+    const messagesRef = useRef(messages);
+    useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+    // ── Performance: token batching for streaming ──
+    // Instead of calling setMessages on EVERY token (causes full re-render each time),
+    // we batch tokens and flush at ~60ms intervals (≈16fps — smooth enough for text).
+    const tokenFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const tokenStreamMsgIdxRef = useRef<number>(-1);
+    const flushTokenBuffer = useCallback(() => {
+        const currentText = streamingMessageRef.current;
+        const idx = tokenStreamMsgIdxRef.current;
+        if (idx < 0) return;
+        setMessages((m) => {
+            const updated = [...m];
+            if (idx >= 0 && idx < updated.length) {
+                updated[idx] = { ...updated[idx], content: currentText, isThinking: false };
+            }
+            return updated;
+        });
+    }, []);
+
+    // ── Performance: debounced localStorage saves ──
+    const localStorageSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // ── Performance: deferred preview HTML build timer ──
+    const previewBuildTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // ── Cleanup: abort all in-flight work when component unmounts (e.g. logout navigation) ──
+    useEffect(() => {
+        return () => {
+            abortControllerRef.current?.abort();
+            if (tokenFlushTimerRef.current) clearTimeout(tokenFlushTimerRef.current);
+            if (localStorageSaveTimerRef.current) clearTimeout(localStorageSaveTimerRef.current);
+            if (autoFixTimerRef.current) clearTimeout(autoFixTimerRef.current);
+            if (previewBuildTimerRef.current) clearTimeout(previewBuildTimerRef.current);
+        };
+    }, []);
 
     const getContextId = useCallback(() => projectId || sessionId, [projectId, sessionId]);
 
@@ -767,6 +1373,9 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
 
     // Load project from history if projectId is in URL or prop
     useEffect(() => {
+        // Don't overwrite state while AI generation is in progress
+        if (generatingRef.current) return;
+
         const loadProjectId = initialProjectId || searchParams.get('project');
         const promptParam = initialPrompt || searchParams.get('prompt');
 
@@ -795,6 +1404,17 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
         }
 
         if (loadProjectId) {
+            // If we already have data for this project (e.g. from a previous
+            // StudioContent instance that just navigated here), skip the fetch.
+            // The localStorage effects below will restore the state.
+            const contextId = loadProjectId;
+            const alreadyCached = localStorage.getItem(`ryze-generated-code-${contextId}`)
+                || localStorage.getItem(`ryze-all-files-${contextId}`);
+            if (alreadyCached && projectId === loadProjectId) {
+                // Data is already in state from the previous mount — nothing to do
+                return;
+            }
+
             // Use direct fetch for single project instead of fetching all
             fetchProject(loadProjectId).then((project) => {
                 if (project && project.code) {
@@ -885,6 +1505,9 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
 
     // Load chat history from localStorage on mount (only if not a new session and no project loaded)
     useEffect(() => {
+        // Don't overwrite state while AI generation is in progress
+        if (generatingRef.current) return;
+
         const promptParam = searchParams.get('prompt');
         const loadProjectId = searchParams.get('project');
 
@@ -989,20 +1612,21 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
     }, [projectId, getContextId]);
 
     // Save chat history to localStorage whenever messages change (project-scoped)
+    // DEBOUNCED: during streaming, messages change on every token flush (~16fps).
+    // We delay the save by 2s so we only write once after a burst of updates.
     useEffect(() => {
-        if (messages.length > 1) { // Don't save if only welcome message
-            const contextId = getContextId();
+        if (messages.length <= 1) return; // Don't save if only welcome message
 
-            // Save only essential message data to reduce storage
+        if (localStorageSaveTimerRef.current) clearTimeout(localStorageSaveTimerRef.current);
+        localStorageSaveTimerRef.current = setTimeout(() => {
+            const contextId = getContextId();
             const essentialMessages = messages.map(m => ({
                 role: m.role,
                 content: m.content,
-                // Omit large/temporary fields
             }));
             try {
                 localStorage.setItem(`ryze-chat-history-${contextId}`, JSON.stringify(essentialMessages));
             } catch {
-                // Storage quota exceeded - archive old data
                 console.warn('localStorage quota exceeded, archiving...');
                 const timestamp = new Date().toISOString();
                 const archiveKey = `ryze-chat-archive-${timestamp}`;
@@ -1010,10 +1634,13 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
                 const archives = JSON.parse(localStorage.getItem('ryze-chat-archives-list') || '[]');
                 archives.push({ key: archiveKey, timestamp, projectName: projectName || 'Auto-archived', contextId });
                 localStorage.setItem('ryze-chat-archives-list', JSON.stringify(archives));
-                // Clear current to make space
                 localStorage.removeItem(`ryze-chat-history-${contextId}`);
             }
-        }
+        }, 2000);
+
+        return () => {
+            if (localStorageSaveTimerRef.current) clearTimeout(localStorageSaveTimerRef.current);
+        };
     }, [messages, projectId, sessionId, projectName, getContextId]);
 
     // Save generated code to localStorage (project-scoped)
@@ -1067,30 +1694,35 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
     // Auto-send the initial prompt from Dashboard
     useEffect(() => {
         const promptParam = initialPrompt || searchParams.get('prompt');
-        if (promptParam && input === promptParam && !generating && initialPromptSentRef.current) {
+        if (promptParam && input === promptParam && !generating && initialPromptSentRef.current && !initialPromptFiredRef.current) {
             // Trigger send after a small delay to ensure state is settled
             const timer = setTimeout(() => {
-                if (input.trim()) {
+                // Double-check: prevent duplicate fires even across re-renders
+                if (input.trim() && !initialPromptFiredRef.current && !generatingRef.current) {
+                    initialPromptFiredRef.current = true;
                     handleSendRef.current?.(input);
-                    // Clear URL params so reload doesn't re-send the prompt
-                    if (initialProjectId) {
-                        router.replace(`/projects/${initialProjectId}`, { scroll: false });
-                    } else {
-                        router.replace('/studio', { scroll: false });
-                    }
                 }
             }, 100);
             return () => clearTimeout(timer);
         }
     }, [input, generating, searchParams, router, initialPrompt, initialProjectId]);
 
+    // Debounce scroll-into-view during streaming to avoid layout thrashing
+    const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     useEffect(() => {
-        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+        scrollTimerRef.current = setTimeout(() => {
+            chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 150);
+        return () => { if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current); };
     }, [messages, thinkingSteps]);
 
     useEffect(() => {
         setEditableCode(generatedCode);
     }, [generatedCode, setEditableCode]);
+
+    // Keep generatingRef in sync so event listeners can read current value
+    useEffect(() => { generatingRef.current = generating; }, [generating]);
 
     // Close route search dropdown on outside click
     useEffect(() => {
@@ -1108,6 +1740,11 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
     useEffect(() => {
         const handleMessage = (event: MessageEvent) => {
             if (event.data?.type === 'preview-error') {
+                // Ignore errors while actively generating — the preview may load
+                // partial/incomplete code mid-stream, producing false positives
+                // like "App is not defined".
+                if (generatingRef.current) return;
+
                 const error = event.data.error;
                 setPreviewError(error);
 
@@ -1160,59 +1797,95 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
         return () => window.removeEventListener('message', handleMessage);
     }, [allGeneratedFiles]); // minimal deps to keep listener fresh
 
-    // Clear error when code changes
+    // Clear error when code changes (including file updates from auto-fix)
     useEffect(() => {
         setPreviewError(null);
         setErrorModalOpen(false);
-    }, [generatedCode, previewRoute]);
+    }, [generatedCode, previewRoute, allGeneratedFiles]);
 
-    // Auto-fix: If preview errors appear shortly after generation completes, auto-fix them
+    // Auto-fix: If preview errors appear shortly after generation completes, auto-fix them.
+    // Uses refs for guards (not state) because the setTimeout callback runs later and
+    // React state may still be batched/stale, causing the counter check to pass twice.
     useEffect(() => {
-        if (!previewError || generating || isAutoFixing || autoFixAttempts >= 2) return;
+        if (!previewError || generating || isAutoFixingRef.current || autoFixAttemptsRef.current >= 3) return;
 
-        // Only auto-fix if we just finished generating (within 5 seconds)
+        // Skip auto-fix if the error has no useful details (cross-origin "Script error.")
+        // The AI can't meaningfully fix an error it can't see.
+        if (previewError.message === 'Script error.' && !previewError.source && !previewError.stack) return;
+
         if (autoFixTimerRef.current) clearTimeout(autoFixTimerRef.current);
+        // Increased delay to 8 seconds to allow files to finish writing to storage
+        // and DB cache to be updated before the next request reads them.
         autoFixTimerRef.current = setTimeout(() => {
-            if (previewError && !generating && autoFixAttempts < 2) {
-                setIsAutoFixing(true);
-                setAutoFixAttempts(prev => prev + 1);
+            // Re-check guards using refs (synchronous, never stale)
+            if (!previewError || generatingRef.current || isAutoFixingRef.current || autoFixAttemptsRef.current >= 3) return;
 
-                // Show a clean user-facing message
-                terminalStore.addEntry('info', `Detected runtime error. Auto-fixing (attempt ${autoFixAttempts + 1}/2)...`);
+            // Lock immediately via refs before any async work
+            isAutoFixingRef.current = true;
+            setIsAutoFixing(true);
+            autoFixAttemptsRef.current += 1;
+            setAutoFixAttempts(autoFixAttemptsRef.current);
 
-                // Build structured code context so the AI can read the files
-                let codeContext = '';
-                const files = allGeneratedFiles;
-                if (Object.keys(files).length > 0) {
-                    const errorFile = previewError.source;
-                    const sortedPaths = Object.keys(files).sort((a, b) => {
-                        if (errorFile) {
-                            if (a.includes(errorFile) || errorFile.includes(a)) return -1;
-                            if (b.includes(errorFile) || errorFile.includes(b)) return 1;
-                        }
-                        return a.localeCompare(b);
-                    });
-                    codeContext = '\n\nCurrent project files:\n';
-                    for (const filePath of sortedPaths) {
-                        codeContext += `\n--- FILE: ${filePath} ---\n${files[filePath]}\n--- END FILE ---\n`;
-                    }
-                }
+            terminalStore.addEntry('info', `Detected runtime error. Auto-fixing (attempt ${autoFixAttemptsRef.current}/3)...`);
 
-                const fixPrompt = `Fix this runtime error. Only fix the broken file(s), do NOT regenerate everything.\n\nError: ${previewError.message}${previewError.source ? `\nFile: ${previewError.source}` : ''}${previewError.line ? `\nLine: ${previewError.line}` : ''}${previewError.stack ? `\nStack: ${previewError.stack}` : ''}${codeContext}\n\nReturn ONLY the corrected file(s) using <ryze_artifact> format.`;
-                handleSendRef.current?.(fixPrompt, 'chat');
-                setIsAutoFixing(false);
+            // Build a detailed, targeted error-fix prompt.
+            // Include the list of project files so the AI knows which files exist.
+            const fileList = Object.keys(allGeneratedFiles);
+            const fileListStr = fileList.length > 0
+                ? `\n\nProject files: ${fileList.join(', ')}`
+                : '';
+
+            // Provide specific guidance based on the error type
+            let errorGuidance = '';
+            const errMsg = previewError.message.toLowerCase();
+            if (errMsg.includes('is not defined')) {
+                const match = previewError.message.match(/(\w+) is not defined/);
+                const undefinedVar = match ? match[1] : 'unknown';
+                errorGuidance = `\n\nDIAGNOSIS: Variable "${undefinedVar}" is used but not declared. Common causes:\n- Missing import statement\n- Destructured prop/object property used as a standalone variable\n- Conditional expression using a prop name directly (e.g., {${undefinedVar} && ...} instead of {props.${undefinedVar} && ...})\n- Variable declared inside a different scope\n\nFix: declare "${undefinedVar}" with const/let, or add it as a prop parameter, or add optional chaining.`;
+            } else if (errMsg.includes('unexpected token') || errMsg.includes('syntaxerror')) {
+                errorGuidance = '\n\nDIAGNOSIS: Syntax error — likely TypeScript syntax that the browser cannot parse. Common causes:\n- TypeScript generics like <T extends ...> in arrow functions (use function keyword instead)\n- Type annotations that weren\'t stripped\n- Enum declarations (use const objects instead)\n\nFix: simplify TypeScript syntax, remove type annotations, convert enums to const objects.';
+            } else if (errMsg.includes('cannot read properties of') || errMsg.includes('cannot read property')) {
+                errorGuidance = '\n\nDIAGNOSIS: Accessing property on null/undefined. Common causes:\n- Array.map() called on undefined variable\n- Accessing nested property without null check\n\nFix: add optional chaining (?.), nullish coalescing (??), or initialize with default values.';
             }
-        }, 3000);
+
+            const fixPrompt = `Fix this runtime error. Do NOT regenerate the entire application. Only fix the specific broken file(s).
+
+ERROR:
+${previewError.message}
+${previewError.source ? `Source File: ${previewError.source}` : ''}
+${previewError.line ? `Line: ${previewError.line}${previewError.column ? `, Column: ${previewError.column}` : ''}` : ''}
+${previewError.stack ? `Stack: ${previewError.stack}` : ''}
+${errorGuidance}${fileListStr}
+
+INSTRUCTIONS:
+1. Read the <current-project-files> in the system context carefully.
+2. Find the exact file and line that caused the error.
+3. Return ONLY the fixed file(s) as a <ryze_artifact> block.
+4. **OUTPUT THE ENTIRE FILE** from first line to last line. The system will REJECT fixes that are drastically smaller than the original file. If the original file has 200 lines, your fix must also have ~200 lines.
+5. Do NOT change files that are working correctly.
+6. Make sure all variables are properly declared before use.
+7. Use defensive coding: optional chaining (?.), null checks, default values.
+8. Do NOT use TypeScript generics with extends in arrow functions. Use function keyword instead.
+9. Do NOT use enum declarations — use const objects. Do NOT use type annotations on parameters.`;
+            handleSendRef.current?.(fixPrompt, 'chat');
+        }, 8000);
 
         return () => {
             if (autoFixTimerRef.current) clearTimeout(autoFixTimerRef.current);
         };
-    }, [previewError, generating, isAutoFixing, autoFixAttempts, allGeneratedFiles]);
+    }, [previewError, generating, allGeneratedFiles]);
 
-    // Reset auto-fix counter when user sends a new prompt
+    // Reset auto-fix counter only when the USER initiates a new generation
+    // (not when auto-fix itself triggers a chat request, which also sets generating=true).
     useEffect(() => {
-        if (generating) {
+        if (generating && !isAutoFixingRef.current) {
+            autoFixAttemptsRef.current = 0;
             setAutoFixAttempts(0);
+        }
+        // When generation finishes, reset isAutoFixing so the effect can re-evaluate.
+        if (!generating && isAutoFixingRef.current) {
+            isAutoFixingRef.current = false;
+            setIsAutoFixing(false);
         }
     }, [generating]);
 
@@ -1245,7 +1918,11 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
 
     const handleSend = useCallback(async (promptMessage?: string, modeArg?: "plan" | "build" | "chat", options?: { webSearch?: boolean }) => {
         const prompt = promptMessage || input;
-        if (!prompt.trim() || generating) return;
+        // Use ref for guard check — state is batched and can be stale if
+        // handleSend is called twice before React re-renders.
+        if (!prompt.trim() || generatingRef.current) return;
+        // Set ref immediately so concurrent calls are blocked synchronously
+        generatingRef.current = true;
         setInput('');
 
         // Check if this is a new session from dashboard (has prompt param but no project param)
@@ -1326,11 +2003,11 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
             // Best approach: Add it to the 'existingCode' context or similar.
         }
 
-        // Build conversation history from messages
+        // Build conversation history from messages (read via ref to avoid dep)
         // For new sessions, only include the welcome message to ensure fresh start
         const conversationHistory = isNewSession
             ? [{ role: 'ai' as const, content: 'Hello! I\'m Ryze. Describe the UI you want to build and I\'ll generate production-ready React + Tailwind CSS code. Try saying "Create a landing page" or "Build a dashboard".' }]
-            : messages.map((m) => ({
+            : messagesRef.current.map((m) => ({
                 role: m.role,
                 content: m.content,
             }));
@@ -1339,8 +2016,11 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
         const streamMsgIndex = { current: -1 };
         setMessages((m) => {
             streamMsgIndex.current = m.length;
+            tokenStreamMsgIdxRef.current = m.length;
             return [...m, { role: 'ai' as const, content: '', isThinking: true }];
         });
+        // declared here so finally can update the route after streaming completes.
+        let activeProjectId = projectId;
 
         try {
             // Pass existing code context so the AI can reason about modifications
@@ -1384,8 +2064,87 @@ Fix this error in your next response.
 
             // Build theme context string from the user's selected design theme
             const themeCtx = designTheme
-                ? `Theme: ${designTheme.name} — ${designTheme.description}. Style: ${designTheme.style}. Colors: primary=${designTheme.colors.primary}, secondary=${designTheme.colors.secondary}, accent=${designTheme.colors.accent}, background=${designTheme.colors.background}, surface=${designTheme.colors.surface}, text=${designTheme.colors.text}. Font: ${designTheme.font}.`
+                ? `Theme: "${designTheme.name}"
+Description: ${designTheme.description}
+Visual Style: ${designTheme.style}
+Font: ${designTheme.font}
+
+COLOR MAP (use these NAMED THEME CLASSES — they are pre-registered in tailwind.config and guaranteed to work):
+- primary: ${designTheme.colors.primary} → bg-theme-primary, text-theme-primary, border-theme-primary
+- secondary: ${designTheme.colors.secondary} → bg-theme-secondary, text-theme-secondary
+- accent: ${designTheme.colors.accent} → text-theme-accent, bg-theme-accent
+- background: ${designTheme.colors.background} → bg-theme-background
+- surface: ${designTheme.colors.surface} → bg-theme-surface
+- text: ${designTheme.colors.text} → text-theme-text
+For opacity variants, use arbitrary hex: bg-[${designTheme.colors.primary}]/20, shadow-[0_0_15px_${designTheme.colors.primary}]
+
+DESIGN REQUIREMENTS:
+1. Apply the Visual Style description above to EVERY component — this defines the look and feel.
+2. Use pre-defined animation classes (already available — do NOT define @keyframes): animate-fadeIn, animate-slideUp, animate-slideDown, animate-scaleIn, animate-float, animate-gradient, animate-pulse-glow.
+3. Cards: hover:scale-105 hover:-translate-y-1 transition-all duration-300. Stagger with style={{ animationDelay: '0.2s' }}.
+4. Buttons: bg-theme-primary hover:opacity-90 transition-all duration-300 hover:shadow-lg.
+5. Use pre-loaded fonts: font-sans (Inter), font-display (Poppins), font-mono (JetBrains Mono), font-serif (Merriweather), font-jakarta (Plus Jakarta Sans).
+6. Add glow/shadow effects matching the theme: shadow-[0_0_15px_${designTheme.colors.primary}] on key CTAs.
+7. Hero sections: animate-fadeIn on headline, animate-slideUp on CTA.
+8. All interactive elements MUST have hover/focus states with smooth transitions.`
                 : undefined;
+
+            // Create project eagerly BEFORE generation starts so files are stored
+            // under the correct project path in Supabase Storage.
+            if (!activeProjectId && orchestrationMode === 'generate' && !isFixRequest) {
+                // Fresh generation — discard previous project's files/errors so
+                // the AI doesn't try to fix errors that belong to another project.
+                existingCodeContext = undefined;
+                setPreviewError(null);
+                setAllGeneratedFiles({});
+                setGeneratedCode('');
+                setAutoFixAttempts(0);
+                setIsAutoFixing(false);
+                if (autoFixTimerRef.current) {
+                    clearTimeout(autoFixTimerRef.current);
+                    autoFixTimerRef.current = null;
+                }
+
+                try {
+                    const project = await createProject(prompt, {
+                        code: '// Generating...',
+                        provider: selectedModel.provider,
+                        model: selectedModel.id,
+                    });
+                    activeProjectId = project.id;
+                    migrateSessionToProject(project.id);
+                    setProjectId(project.id);
+                    // NOTE: Do NOT router.replace here — navigating before the stream
+                    // completes will unmount this component and kill the SSE connection.
+                    // The route is updated in the finally block after generation finishes.
+                } catch (e) {
+                    console.warn('Early project creation failed, continuing without project_id:', e);
+                }
+            }
+
+            // Build structured error context for the backend's error_context field
+            let structuredErrors: { id: string; type: string; message: string; file?: string; line?: number; stack_trace?: string }[] | undefined;
+            if (previewError) {
+                structuredErrors = [{
+                    id: 'runtime-1',
+                    type: 'runtime',
+                    message: previewError.message,
+                    ...(previewError.source ? { file: previewError.source } : {}),
+                    ...(previewError.line ? { line: previewError.line } : {}),
+                    ...(previewError.stack ? { stack_trace: previewError.stack } : {}),
+                }];
+                // Also include recent terminal errors
+                const recentTerminalErrors = terminalStore.getLatestErrors();
+                for (let i = 0; i < recentTerminalErrors.length && i < 3; i++) {
+                    const te = recentTerminalErrors[i];
+                    structuredErrors.push({
+                        id: `terminal-${i + 1}`,
+                        type: 'terminal',
+                        message: te.message,
+                        ...(te.detail ? { stack_trace: te.detail } : {}),
+                    });
+                }
+            }
 
             await streamChat({
                 prompt,
@@ -1396,7 +2155,8 @@ Fix this error in your next response.
                 webSearchContext,
                 existingCode: existingCodeContext,
                 themeContext: themeCtx,
-                projectId: projectId || undefined,
+                projectId: activeProjectId || undefined,
+                errorContext: structuredErrors,
                 signal: abortController.signal,
 
                 onStep: (step) => {
@@ -1434,15 +2194,13 @@ Fix this error in your next response.
 
                 onToken: (token) => {
                     streamingMessageRef.current += token;
-                    const currentText = streamingMessageRef.current;
-                    setMessages((m) => {
-                        const updated = [...m];
-                        const idx = streamMsgIndex.current;
-                        if (idx >= 0 && idx < updated.length) {
-                            updated[idx] = { ...updated[idx], content: currentText, isThinking: false };
-                        }
-                        return updated;
-                    });
+                    // Throttled flush: schedule a UI update if one isn't pending
+                    if (!tokenFlushTimerRef.current) {
+                        tokenFlushTimerRef.current = setTimeout(() => {
+                            tokenFlushTimerRef.current = null;
+                            flushTokenBuffer();
+                        }, 60);
+                    }
                 },
 
                 onQuestions: (questionsData) => {
@@ -1677,10 +2435,11 @@ Fix this error in your next response.
                         const saveCode = Object.keys(allFiles).length > 0
                             ? JSON.stringify(allFiles)
                             : codeForSave;
-                        if (projectId) {
-                            updateProject(projectId, { code_json: saveCode, description: prompt }).catch(() => { });
+                        if (activeProjectId) {
+                            // Project was already created (eagerly or from a previous session)
+                            updateProject(activeProjectId, { code_json: saveCode, description: prompt }).catch(() => { });
                         } else if (!isFixRequest) {
-                            // Only create new project for actual generation, NOT for fix requests
+                            // Fallback: create project if eager creation was skipped or failed
                             createProject(prompt, {
                                 code: saveCode,
                                 provider: selectedModel.provider,
@@ -1719,9 +2478,9 @@ Fix this error in your next response.
                             }]);
 
                             // Save to project if we have one
-                            if (projectId) {
+                            if (activeProjectId) {
                                 const mergedFiles = { ...allGeneratedFiles, ...updatedFiles };
-                                updateProject(projectId, { code_json: JSON.stringify(mergedFiles) }).catch(() => { });
+                                updateProject(activeProjectId, { code_json: JSON.stringify(mergedFiles) }).catch(() => { });
                             }
                         }
                     }
@@ -1755,12 +2514,32 @@ Fix this error in your next response.
                 });
             }
         } finally {
+            // Flush any remaining buffered tokens before cleaning up
+            if (tokenFlushTimerRef.current) {
+                clearTimeout(tokenFlushTimerRef.current);
+                tokenFlushTimerRef.current = null;
+            }
+            flushTokenBuffer();
+
+            generatingRef.current = false;
             setGenerating(false);
             setThinkingOpen(false);
             setSearchingWeb(false);
             abortControllerRef.current = null;
+
+            // Navigate to the project route AFTER generation is fully complete.
+            // IMPORTANT: Defer to next frame so React finishes batching the
+            // onDone state updates (setAllGeneratedFiles, setMessages, etc.)
+            // before this component unmounts due to the route change.
+            // Without this, the component unmounts mid-batch and the new
+            // StudioContent mounts with stale/empty localStorage.
+            if (activeProjectId && activeProjectId !== projectId) {
+                setTimeout(() => {
+                    router.replace(`/projects/${activeProjectId}`, { scroll: false });
+                }, 0);
+            }
         }
-    }, [input, generating, searchParams, chatMode, selectedModel, messages, generatedCode, previousCode, projectId, migrateSessionToProject, allGeneratedFiles, webSearchEnabled]);
+    }, [input, searchParams, chatMode, selectedModel, generatedCode, previousCode, projectId, migrateSessionToProject, allGeneratedFiles, webSearchEnabled, flushTokenBuffer]);
 
     // Set the handleSend ref for auto-sending from Dashboard
     useEffect(() => {
@@ -1794,7 +2573,7 @@ Fix this error in your next response.
         }]);
 
         // Get the original prompt from the first user message
-        const originalPrompt = messages.find((m) => m.role === 'user')?.content?.replace('[Plan] ', '') || '';
+        const originalPrompt = messagesRef.current.find((m) => m.role === 'user')?.content?.replace('[Plan] ', '') || '';
 
         setGenerating(true);
         setThinkingSteps([]);
@@ -1806,6 +2585,7 @@ Fix this error in your next response.
         const streamMsgIndex = { current: -1 };
         setMessages((m) => {
             streamMsgIndex.current = m.length;
+            tokenStreamMsgIdxRef.current = m.length;
             return [...m, { role: 'ai' as const, content: '', isThinking: true }];
         });
 
@@ -1817,7 +2597,7 @@ Fix this error in your next response.
                 model: selectedModel.id,
                 planAnswers: answers,
                 themeContext: designTheme
-                    ? `Theme: ${designTheme.name} — ${designTheme.description}. Style: ${designTheme.style}. Colors: primary=${designTheme.colors.primary}, secondary=${designTheme.colors.secondary}, accent=${designTheme.colors.accent}, background=${designTheme.colors.background}, surface=${designTheme.colors.surface}, text=${designTheme.colors.text}. Font: ${designTheme.font}.`
+                    ? `Theme: "${designTheme.name}"\nDescription: ${designTheme.description}\nVisual Style: ${designTheme.style}\nFont: ${designTheme.font}\n\nCOLOR MAP (named theme classes — pre-registered in tailwind.config):\n- primary: ${designTheme.colors.primary} → bg-theme-primary, text-theme-primary\n- secondary: ${designTheme.colors.secondary} → bg-theme-secondary, text-theme-secondary\n- accent: ${designTheme.colors.accent} → text-theme-accent, bg-theme-accent\n- background: ${designTheme.colors.background} → bg-theme-background\n- surface: ${designTheme.colors.surface} → bg-theme-surface\n- text: ${designTheme.colors.text} → text-theme-text\n\nDESIGN: Apply Visual Style effects to all components. Use pre-defined animation classes (animate-fadeIn, animate-slideUp, animate-scaleIn, animate-float, animate-gradient). Use pre-loaded fonts (font-sans, font-display, font-mono, font-serif, font-jakarta).`
                     : undefined,
                 signal: abortController.signal,
 
@@ -1855,15 +2635,12 @@ Fix this error in your next response.
 
                 onToken: (token) => {
                     streamingMessageRef.current += token;
-                    const currentText = streamingMessageRef.current;
-                    setMessages((m) => {
-                        const updated = [...m];
-                        const idx = streamMsgIndex.current;
-                        if (idx >= 0 && idx < updated.length) {
-                            updated[idx] = { ...updated[idx], content: currentText, isThinking: false };
-                        }
-                        return updated;
-                    });
+                    if (!tokenFlushTimerRef.current) {
+                        tokenFlushTimerRef.current = setTimeout(() => {
+                            tokenFlushTimerRef.current = null;
+                            flushTokenBuffer();
+                        }, 60);
+                    }
                 },
 
                 onPlanReady: (plan) => {
@@ -1918,6 +2695,8 @@ Fix this error in your next response.
                 toast.error("Plan generation failed");
             }
         } finally {
+            if (tokenFlushTimerRef.current) { clearTimeout(tokenFlushTimerRef.current); tokenFlushTimerRef.current = null; }
+            flushTokenBuffer();
             setGenerating(false);
             setThinkingOpen(false);
         }
@@ -1967,7 +2746,7 @@ Fix this error in your next response.
             isImplementing: true,
         }]);
 
-        const originalPrompt = messages.find((m) => m.role === 'user')?.content?.replace('[Plan] ', '') || '';
+        const originalPrompt = messagesRef.current.find((m) => m.role === 'user')?.content?.replace('[Plan] ', '') || '';
 
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
@@ -1980,8 +2759,9 @@ Fix this error in your next response.
                 model: selectedModel.id,
                 planData,
                 themeContext: designTheme
-                    ? `Theme: ${designTheme.name} — ${designTheme.description}. Style: ${designTheme.style}. Colors: primary=${designTheme.colors.primary}, secondary=${designTheme.colors.secondary}, accent=${designTheme.colors.accent}, background=${designTheme.colors.background}, surface=${designTheme.colors.surface}, text=${designTheme.colors.text}. Font: ${designTheme.font}.`
+                    ? `Theme: "${designTheme.name}"\nDescription: ${designTheme.description}\nStyle: ${designTheme.style}\nFont: ${designTheme.font}\n\nCOLOR MAP (named theme classes — pre-registered in tailwind.config):\n- primary: ${designTheme.colors.primary} → bg-theme-primary, text-theme-primary\n- secondary: ${designTheme.colors.secondary} → bg-theme-secondary, text-theme-secondary\n- accent: ${designTheme.colors.accent} → text-theme-accent, bg-theme-accent\n- background: ${designTheme.colors.background} → bg-theme-background\n- surface: ${designTheme.colors.surface} → bg-theme-surface\n- text: ${designTheme.colors.text} → text-theme-text\n\nDESIGN: Apply Visual Style effects. Use pre-defined animations (animate-fadeIn, animate-slideUp, etc). Use pre-loaded fonts.`
                     : undefined,
+                projectId: projectId || undefined,
                 signal: abortController.signal,
 
                 onStep: (step) => {
@@ -2140,6 +2920,8 @@ Fix this error in your next response.
                 toast.error("Implementation failed");
             }
         } finally {
+            if (tokenFlushTimerRef.current) { clearTimeout(tokenFlushTimerRef.current); tokenFlushTimerRef.current = null; }
+            flushTokenBuffer();
             setGenerating(false);
             setThinkingOpen(false);
             setIsImplementing(false);
@@ -2281,6 +3063,42 @@ INSTRUCTIONS:
         terminalStore.setOnFixError(cb);
         return () => terminalStore.setOnFixError(null);
     }, []);
+
+    // ── Performance: deferred preview HTML ──
+    // buildPreviewHtml() is an expensive synchronous operation (heavy regex on
+    // potentially 10+ merged files). Running it inline in useMemo blocks the
+    // main thread and freezes the UI, especially on mount after a route change.
+    //
+    // Solution: compute in a deferred useEffect so the component renders the
+    // shell immediately, then fills in the iframe HTML on the next frame.
+    const [deferredPreviewHtml, setDeferredPreviewHtml] = useState('');
+    useEffect(() => {
+        // Skip entirely when preview tab isn't active
+        if (activeTab !== 'preview') {
+            // Don't clear — keep last preview so switching back is instant
+            return;
+        }
+        const previewCode = previewRoute && allGeneratedFiles[previewRoute]
+            ? allGeneratedFiles[previewRoute]
+            : generatedCode;
+        if (!previewCode && Object.keys(allGeneratedFiles).length === 0) {
+            setDeferredPreviewHtml('');
+            return;
+        }
+        // Debounce by 50ms — during streaming, files change rapidly
+        if (previewBuildTimerRef.current) clearTimeout(previewBuildTimerRef.current);
+        previewBuildTimerRef.current = setTimeout(() => {
+            setDeferredPreviewHtml(buildPreviewHtml(previewCode, allGeneratedFiles, designTheme?.colors));
+        }, 50);
+        return () => { if (previewBuildTimerRef.current) clearTimeout(previewBuildTimerRef.current); };
+    }, [generatedCode, previewRoute, allGeneratedFiles, designTheme?.colors, activeTab]);
+    const memoizedPreviewHtml = deferredPreviewHtml;
+
+    // Memoize the file tree so it's not rebuilt every render (used in code tab + commit messages)
+    const memoizedFileTree = useMemo(
+        () => buildFileTree(generatedCode, Object.keys(allGeneratedFiles).length > 0 ? allGeneratedFiles : undefined),
+        [generatedCode, allGeneratedFiles]
+    );
 
     return (
         <div className="flex flex-col h-full bg-background overflow-hidden font-sans">
@@ -2471,7 +3289,7 @@ INSTRUCTIONS:
                                                                         if (allGeneratedFiles[file.path]) {
                                                                             setViewingFileContent(allGeneratedFiles[file.path]);
                                                                         } else {
-                                                                            const tree = buildFileTree(generatedCode, Object.keys(allGeneratedFiles).length > 0 ? allGeneratedFiles : undefined);
+                                                                            const tree = memoizedFileTree;
                                                                             const findFile = (files: GeneratedFile[]): string => {
                                                                                 for (const f of files) {
                                                                                     if (f.path === file.path) return f.content;
@@ -3126,7 +3944,7 @@ INSTRUCTIONS:
                                                     ? allGeneratedFiles[previewRoute]
                                                     : generatedCode;
                                                 if (previewCode) {
-                                                    const html = buildPreviewHtml(previewCode, allGeneratedFiles);
+                                                    const html = buildPreviewHtml(previewCode, allGeneratedFiles, designTheme?.colors);
                                                     const blob = new Blob([html], { type: 'text/html' });
                                                     const url = URL.createObjectURL(blob);
                                                     window.open(url, '_blank');
@@ -3214,12 +4032,7 @@ INSTRUCTIONS:
                                                 )}
                                                 <iframe
                                                     key={iframeKey}
-                                                    srcDoc={buildPreviewHtml(
-                                                        previewRoute && allGeneratedFiles[previewRoute]
-                                                            ? allGeneratedFiles[previewRoute]
-                                                            : generatedCode,
-                                                        allGeneratedFiles
-                                                    )}
+                                                    srcDoc={memoizedPreviewHtml}
                                                     className="w-full flex-1 border-0 outline-none block"
                                                     sandbox="allow-scripts allow-same-origin"
                                                     title="Live Preview"
@@ -3261,7 +4074,7 @@ INSTRUCTIONS:
                                                     <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Explorer</span>
                                                 </div>
                                                 <FileTreeView
-                                                    files={buildFileTree(generatedCode, Object.keys(allGeneratedFiles).length > 0 ? allGeneratedFiles : undefined)}
+                                                    files={memoizedFileTree}
                                                     activeFile={activeFile}
                                                     onSelect={(file) => {
                                                         setActiveFile(file.path);

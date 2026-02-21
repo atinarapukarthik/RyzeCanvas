@@ -169,6 +169,52 @@ CREATE POLICY "Users can delete own files"
     USING (bucket_id = 'projects');
 
 
+-- ── 6. Project file context cache ─────────────────────────────────────
+-- Stores downloaded file contents so the AI agent can load project context
+-- from the DB instead of re-downloading from Storage every request.
+CREATE TABLE IF NOT EXISTS project_file_context (
+    project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL,
+    file_path   VARCHAR NOT NULL,
+    file_type   VARCHAR,              -- "source", "config", "style", "entry"
+    file_content TEXT,
+    file_size   INTEGER,
+    last_read_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (project_id, file_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pfc_project_id ON project_file_context(project_id);
+
+
+-- ── 7. Project analysis summary ──────────────────────────────────────
+-- Stores metadata about a project's file tree and read progress.
+CREATE TABLE IF NOT EXISTS project_analysis (
+    project_id      UUID PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    user_id         INTEGER NOT NULL,
+    total_files     INTEGER,
+    file_tree       JSONB,
+    is_fully_read   BOOLEAN DEFAULT FALSE,
+    read_progress   INTEGER DEFAULT 0,
+    last_analyzed_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- RLS for new tables
+ALTER TABLE project_file_context ENABLE ROW LEVEL SECURITY;
+ALTER TABLE project_analysis     ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow authenticated users" ON project_file_context;
+CREATE POLICY "Allow authenticated users"
+    ON project_file_context FOR ALL
+    TO authenticated
+    USING (true);
+
+DROP POLICY IF EXISTS "Allow authenticated users" ON project_analysis;
+CREATE POLICY "Allow authenticated users"
+    ON project_analysis FOR ALL
+    TO authenticated
+    USING (true);
+
+
 -- ── Done ────────────────────────────────────────────────────────────────
 -- After running this migration:
 --   1. Set SUPABASE_SERVICE_KEY in your backend .env
