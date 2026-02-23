@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Define CSS variables for fonts and colors based on design guidelines */
+:root {
+  --font-heading: var(--font-inter); /* Mapped to Inter font */
+  --font-body: var(--font-roboto);   /* Mapped to Roboto font */
+
+  --color-primary: #4A00B0;
+  --color-background-dark: #0A0A0A;
+  --color-surface-neutrals: #1A1A1A;
+  --color-accent: #FFD700;
+}
+
+/* Apply custom properties to Tailwind's theme system */
+@layer base {
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    font-family: var(--font-body);
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+  }
+}
+
+/* Extend Tailwind's theme with custom colors and fonts */
+/* This will be configured in tailwind.config.ts, but for now,
+   we ensure the CSS variables are available for direct use or future mapping. */
+/* Example of how they might be used in Tailwind config:
+   extend: {
+     colors: {
+       primary: 'var(--color-primary)',
+       'background-dark': 'var(--color-background-dark)',
+       'surface-neutrals': 'var(--color-surface-neutrals)',
+       accent: 'var(--color-accent)',
+     },
+     fontFamily: {
+       heading: ['var(--font-heading)', 'sans-serif'],
+       body: ['var(--font-body)', 'sans-serif'],
+     },
+   }
+*/
