@@ -127,7 +127,7 @@ class TodoManager:
         """
         Regex extractor to find the ---TODO_START--- payload.
         """
-        pattern = r"---TODO_START---\s*```(?:json)?\s*(.*?)\s*```\s*---TODO_END---"
+        pattern = r"---TODO_START---\s*(?:```(?:json)?\s*)?(.*?)\s*(?:```\s*)?---TODO_END---"
         match = re.search(pattern, raw_output, re.DOTALL)
         
         if match:

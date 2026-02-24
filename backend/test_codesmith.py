@@ -21,7 +21,7 @@ async def test_nodes_1_2_3():
     prompt = "Create a basic 'Solo Leveling' dark theme generic index page and simple CSS."
     # Using Gemini for fast generation during dev/testing
     try:
-        agent = get_architect_agent(model_provider="gemini")
+        agent = get_architect_agent(model_provider="ollama")
         response = agent.generate_manifest(prompt)
         manifest = response.get("manifest", {})
         print(f"\nNode 1 Success! Manifest generated with {len(manifest.get('fileManifest', []))} files.")

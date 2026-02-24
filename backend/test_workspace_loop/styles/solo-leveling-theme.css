@@ -1,0 +1,54 @@
+/* -------------------------------------------------
+   Solo Leveling Dark Theme – Global Overrides
+   ------------------------------------------------- */
+
+/* Apply the architect‑approved fonts */
+@layer base {
+  html {
+    @apply font-body;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-heading;
+  }
+}
+
+/* Custom scrollbar for dark mode */
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-surfaceNeutrals rounded;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-backgroundDark;
+  }
+}
+
+/* Selection styling */
+@layer utilities {
+  ::selection {
+    @apply bg-accent text-white;
+  }
+}
+
+/* Ensure focus outlines are visible for accessibility */
+@layer utilities {
+  :focus-visible {
+    outline: 2px solid theme("colors.accent");
+    outline-offset: 2px;
+  }
+}

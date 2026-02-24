@@ -15,7 +15,7 @@ async def test_nodes_1_and_2():
     print("Testing Architect with Gemini (faster fallback)...")
     try:
         # Run Architect
-        agent = get_architect_agent(model_provider="gemini")
+        agent = get_architect_agent(model_provider="ollama")
         response = agent.generate_manifest(prompt)
         manifest = response.get("manifest", {})
         print(f"\nNode 1 Success! Manifest generated with {len(manifest.get('fileManifest', []))} files.")

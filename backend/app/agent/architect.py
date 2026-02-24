@@ -139,7 +139,7 @@ class ArchitectAgent:
             
     def _extract_manifest(self, raw_output: str) -> Dict[str, Any]:
         # Regex to capture everything between the custom delimiters
-        pattern = r"---MANIFEST_START---\s*```(?:json)?\s*(.*?)\s*```\s*---MANIFEST_END---"
+        pattern = r"---MANIFEST_START---\s*(?:```(?:json)?\s*)?(.*?)\s*(?:```\s*)?---MANIFEST_END---"
         match = re.search(pattern, raw_output, re.DOTALL)
         
         if match:
