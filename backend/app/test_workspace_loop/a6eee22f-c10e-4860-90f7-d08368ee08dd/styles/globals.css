@@ -1,0 +1,46 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Roboto:wght@400;500&display=swap");
+
+/* Tailwind base layers */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design System – CSS Variables */
+:root {
+  --color-primary: #1e3a8a;          /* primary */
+  --color-background-dark: #111827; /* backgroundDark */
+  --color-surface-neutrals: #f3f4f6; /* surfaceNeutrals */
+  --color-accent: #f59e0b;           /* accent */
+}
+
+/* Global defaults */
+html {
+  background-color: var(--color-background-dark);
+  color: var(--color-primary);
+  font-family: "Inter", sans-serif;
+}
+
+body {
+  margin: 0;
+  font-family: "Roboto", sans-serif; /* body typography */
+  background-color: var(--color-surface-neutrals);
+}
+
+/* Heading defaults */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: "Inter", sans-serif; /* heading typography */
+  margin: 0;
+}
+
+/* Utility helpers (optional) */
+.bg-primary {
+  background-color: var(--color-primary);
+}
+.text-accent {
+  color: var(--color-accent);
+}

@@ -30,14 +30,33 @@ class TodoState(BaseModel):
 SYSTEM_PROMPT = """# Role: Project State & Todo Controller
 You are the **TodoManager Agent**. You receive a technical manifest and must drive the project toward completion by managing milestone-level tasks.
 
+## CRITICAL: File Path Rules
+This project uses a Next.js 15 App Router with the `src/` directory prefix.
+ALL file paths MUST start with `src/`. This is NON-NEGOTIABLE.
+
+### Correct paths:
+- `src/app/page.tsx` ✅
+- `src/components/ui/hero.tsx` ✅
+- `src/components/shared/navbar.tsx` ✅
+- `src/hooks/use-scroll.ts` ✅
+
+### WRONG paths (NEVER use these):
+- `app/page.tsx` ❌ (missing `src/` prefix)
+- `components/hero.tsx` ❌ (missing `src/` prefix)
+
+### Files you must NEVER include in tasks (already created by the Librarian):
+- `package.json`, `tsconfig.json`, `next.config.mjs`
+- `tailwind.config.ts`, `postcss.config.mjs`, `next-env.d.ts`
+- `src/app/globals.css`, `src/app/layout.tsx`, `src/lib/utils.ts`
+
 ## Directives:
 1. **State Awareness:** You are the "Source of Truth" for progress. Never guess the state; always check the current task list.
 2. **Milestone Grouping:** Break the manifest into 3-7 logical tasks.
-   - Task 1: Foundation (Layout, CSS, Utils).
-   - Tasks 2-5: Core Features (One task per page including its components).
-   - Task 6: Data/Integration (Supabase/Neon setup).
+   - Task 1: Main Page (src/app/page.tsx and its direct components).
+   - Tasks 2-5: Core Features (One task per feature/page including its components).
+   - Task 6: Data/Integration (if applicable).
 3. **Sequential Execution:** Use `move_to_task` to signal the CodeSmith which files to work on next.
-4. **No Fluff:** Do not create tasks for "Testing" or "Review." If the code is written, the task is complete.
+4. **No Fluff:** Do not create tasks for "Testing", "Review", or foundation files that already exist.
 
 ## Communication:
 When handed a manifest, output the task list in JSON format wrapped in ---TODO_START--- and ---TODO_END--- delimiters.
@@ -50,10 +69,10 @@ Example Formatting:
   "tasks": [
     {
       "id": "task_1",
-      "name": "Project Foundation",
-      "files": ["app/layout.tsx", "lib/utils.ts", "app/globals.css"],
+      "name": "Main Landing Page",
+      "files": ["src/app/page.tsx", "src/components/ui/hero.tsx", "src/components/ui/features.tsx"],
       "status": "todo",
-      "description": "Initialize root layout, theme providers, and global utilities."
+      "description": "Build the main landing page with hero section and features grid."
     }
   ]
 }
@@ -151,9 +170,26 @@ class TodoManager:
                         f.write(raw_output)
                     raise ValueError("No valid TODO list found in the agent's output.")
         
-        # Load tasks into memory
+        # Load tasks into memory and normalize all file paths
         self.tasks = parsed.get("tasks", [])
+        self._normalize_task_paths()
         return parsed
+
+    def _normalize_task_paths(self):
+        """
+        Post-process all task file paths to enforce src/ prefix and
+        filter out Librarian-owned files that should never be in tasks.
+        """
+        from app.agent.codesmith import normalize_file_path
+
+        for task in self.tasks:
+            raw_files = task.get("files", [])
+            normalized = []
+            for f in raw_files:
+                norm = normalize_file_path(f)
+                if norm is not None:
+                    normalized.append(norm)
+            task["files"] = normalized
 
     def get_next_task(self):
         """

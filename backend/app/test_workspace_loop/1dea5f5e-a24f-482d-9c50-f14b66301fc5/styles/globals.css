@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* -------------------------------------------------
+   Custom Font Faces (replace with actual font files)
+   ------------------------------------------------- */
+@layer base {
+  @font-face {
+    font-family: "Inter";
+    src: url("/fonts/Inter-Variable.woff2") format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+
+  @font-face {
+    font-family: "Roboto Mono";
+    src: url("/fonts/RobotoMono-Variable.woff2") format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+
+  html {
+    /* 3‑5 color palette – adjust to your design system */
+    --color-primary: 220 90% 56%;   /* example: #3b82f6 */
+    --color-secondary: 340 80% 60%; /* example: #ec4899 */
+    --color-accent: 45 100% 50%;    /* example: #fbbf24 */
+    --color-muted: 210 10% 30%;    /* example: #6b7280 */
+    --color-background: 0 0% 100%; /* white */
+    --color-foreground: 210 10% 10%; /* near‑black */
+
+    /* Dark mode overrides */
+    @media (prefers-color-scheme: dark) {
+      --color-background: 210 10% 10%;
+      --color-foreground: 0 0% 100%;
+    }
+
+    /* Apply palette via Tailwind's `theme` function in `tailwind.config.js` */
+  }
+
+  body {
+    @apply bg-[hsl(var(--color-background))] text-[hsl(var(--color-foreground))] font-inter;
+  }
+}
+
+/* -------------------------------------------------
+   Utility classes (if any custom ones are needed)
+   ------------------------------------------------- */
+@layer utilities {
+  .font-inter {
+    font-family: "Inter", system-ui, sans-serif;
+  }
+  .font-roboto-mono {
+    font-family: "Roboto Mono", ui-monospace, monospace;
+  }
+}

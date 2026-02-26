@@ -1,0 +1,43 @@
+/* Solo Leveling Theme – CSS Custom Properties */
+:root {
+  --color-primary: #2c2f33;
+  --color-background-dark: #1a1b1e;
+  --color-surface-neutrals: #3a3f44;
+  --color-accent: #e5c07b;
+
+  --font-heading: "Montserrat", sans-serif;
+  --font-body: "Inter", sans-serif;
+}
+
+/* Dark mode overrides (the .dark class is applied on <html>) */
+html.dark {
+  --color-primary: #2c2f33;
+  --color-background-dark: #1a1b1e;
+  --color-surface-neutrals: #3a3f44;
+  --color-accent: #e5c07b;
+}
+
+/* Utility classes that map to the design tokens – can be used alongside Tailwind */
+.bg-primary {
+  background-color: var(--color-primary);
+}
+.text-primary {
+  color: var(--color-primary);
+}
+.bg-background-dark {
+  background-color: var(--color-background-dark);
+}
+.text-surface-neutrals {
+  color: var(--color-surface-neutrals);
+}
+.border-accent {
+  border-color: var(--color-accent);
+}
+
+/* Font utilities */
+.font-heading {
+  font-family: var(--font-heading);
+}
+.font-body {
+  font-family: var(--font-body);
+}

@@ -105,7 +105,7 @@ interface ImplementationStatus {
  * When `allFiles` is provided (multi-file project), inlines all component files
  * so cross-file references (e.g. HeroSection imported in App.tsx) resolve at runtime.
  */
-interface PreviewThemeColors {
+export interface PreviewThemeColors {
     primary?: string;
     secondary?: string;
     accent?: string;
@@ -114,7 +114,7 @@ interface PreviewThemeColors {
     text?: string;
 }
 
-function buildPreviewHtml(
+export function buildPreviewHtml(
     code: string,
     allFiles?: Record<string, string>,
     themeColors?: PreviewThemeColors

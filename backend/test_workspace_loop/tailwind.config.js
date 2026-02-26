@@ -1,21 +1,19 @@
-/** @type {import('tailwindcss').Config} */
 module.exports = {
+  darkMode: "class", // Enable manual dark mode toggling via the .dark class
   content: [
-    "./pages/**/*.{js,ts,jsx,tsx}",
-    "./components/**/*.{js,ts,jsx,tsx}",
-    "./app/**/*.{js,ts,jsx,tsx}",
+    "./src/**/*.{js,ts,jsx,tsx}",
+    "./src/app/**/*.{js,ts,jsx,tsx}",
+    "./src/components/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
     extend: {
       colors: {
-        // Four colors defined by the architect for the Solo Leveling dark theme
-        primary: "#2B2D42",
-        backgroundDark: "#0D0D0D",
-        surfaceNeutrals: "#1A1A1A",
-        accent: "#FF4500",
+        primary: "#2C2F33",
+        backgroundDark: "#1A1B1E",
+        surfaceNeutrals: "#3A3F44",
+        accent: "#E5C07B",
       },
       fontFamily: {
-        // Exactly two font families as per design constraints
         heading: ["Montserrat", "sans-serif"],
         body: ["Inter", "sans-serif"],
       },

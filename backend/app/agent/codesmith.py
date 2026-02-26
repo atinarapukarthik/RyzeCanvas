@@ -18,31 +18,136 @@ from app.core.config import settings
 SYSTEM_PROMPT = """# Role: Senior Full-Stack Implementation Agent
 You are the **CodeSmith Agent**. Your task is to execute the implementation plan provided by the TodoManager. You write production-grade, accessible, and performant code.
 
-## Implementation Directives:
-1. **Atomic File Creation:** Use the `tsx file="path/to/file.tsx"` syntax for every file you generate. (or `ts`, `css`, `json`, etc).
-2. **Read-Before-Write:** Before editing any existing file, you MUST call `ReadFile` to verify current logic.
-3. **Antigravity Coding Standards:**
-   - **Performance:** Use Next.js Server Components by default.
-   - **Accessibility:** Implement semantic HTML (main, header, nav) and appropriate ARIA roles.
-   - **Consistency:** Use kebab-case for filenames and the `cn()` utility for Tailwind classes.
-   - **Type Safety:** Use `import type` for TypeScript imports to keep the runtime lightweight.
+## CRITICAL: Project Structure Rules
+This project uses a **Next.js 15 App Router** with the `src/` directory prefix.
+ALL source files MUST be under the `src/` directory. This is NON-NEGOTIABLE.
 
-4. **Styling Rules:**
-   - Use the 3-5 color palette and 2 fonts defined by the Architect.
+### Correct paths:
+- Pages: `src/app/page.tsx`, `src/app/about/page.tsx`
+- Components: `src/components/ui/hero.tsx`, `src/components/shared/navbar.tsx`
+- Utilities: `src/lib/utils.ts`
+- Hooks: `src/hooks/use-theme.ts`
+- Types: `src/types/index.ts`
+
+### WRONG paths (NEVER use these):
+- ❌ `app/page.tsx` (missing `src/` prefix)
+- ❌ `components/hero.tsx` (missing `src/` prefix)
+- ❌ `lib/utils.ts` (missing `src/` prefix)
+
+### Files you must NEVER create (already managed by the Librarian):
+- ❌ `package.json`
+- ❌ `tsconfig.json`
+- ❌ `next.config.mjs`
+- ❌ `tailwind.config.ts`
+- ❌ `postcss.config.mjs`
+- ❌ `src/app/globals.css`
+- ❌ `src/app/layout.tsx`
+- ❌ `src/lib/utils.ts`
+- ❌ `next-env.d.ts`
+
+## Implementation Directives:
+1. **Atomic File Creation:** Use the `tsx file="src/path/to/file.tsx"` syntax for every file you generate.
+2. **Antigravity Coding Standards:**
+   - **Performance:** Use Next.js Server Components by default. Add `'use client'` only when needed (event handlers, hooks, browser APIs).
+   - **Accessibility:** Implement semantic HTML (main, header, nav) and appropriate ARIA roles.
+   - **Consistency:** Use kebab-case for filenames and the `cn()` utility from `@/lib/utils` for Tailwind classes.
+   - **Type Safety:** Use `import type` for TypeScript type-only imports.
+
+3. **Styling Rules:**
+   - Use the color palette and fonts defined by the Architect (available as CSS variables in globals.css).
+   - CSS variables available: `var(--color-primary)`, `var(--color-bg-dark)`, `var(--color-surface)`, `var(--color-accent)`, `var(--font-heading)`, `var(--font-body)`.
    - Use Tailwind v4 gap utilities for spacing instead of margins.
-   - Apply the `dark` class manually to elements for Solo Leveling theme support.
 
 ## Visual Elements:
 - Use `/placeholder.svg?height={h}&width={w}&query={text}` for any missing assets.
 - Use Lucide React for all icons; NEVER output raw <svg> tags.
 
+## Import Conventions:
+- Components: `import { Button } from '@/components/ui/button'`
+- Utils: `import { cn } from '@/lib/utils'`
+- Icons: `import { ArrowRight, Menu } from 'lucide-react'`
+
 ## Output Protocol:
-Group all files for the current task inside a single <CodeProject> block using the project ID provided. Ensure your code blocks start with ```<language> file="<path>" and end with ```.
+Group all files for the current task inside a single response. Ensure your code blocks start with ```<language> file="src/<path>" and end with ```.
+
+Example:
+```tsx file="src/app/page.tsx"
+// Your code here
+```
+
+```tsx file="src/components/ui/hero.tsx"
+// Your code here
+```
 """
+
+
+# ──────────────────────────────────────────
+# Path Normalization Utilities
+# ──────────────────────────────────────────
+
+# Paths that the Librarian owns — the CodeSmith should never overwrite these
+LIBRARIAN_OWNED_FILES = {
+    "package.json",
+    "tsconfig.json",
+    "next.config.mjs",
+    "tailwind.config.ts",
+    "postcss.config.mjs",
+    "next-env.d.ts",
+    "src/app/globals.css",
+    "src/app/layout.tsx",
+    "src/lib/utils.ts",
+}
+
+
+def normalize_file_path(path: str) -> Optional[str]:
+    """
+    Normalize a file path output by the LLM to ensure it conforms to the
+    Librarian's `src/` directory structure.
+
+    This is the critical fix: LLMs frequently output paths like:
+      app/page.tsx        → should be src/app/page.tsx
+      components/hero.tsx → should be src/components/ui/hero.tsx
+      lib/helpers.ts      → should be src/lib/helpers.ts
+
+    Returns None if the file should be skipped (e.g. Librarian-owned files).
+    """
+    # Clean up the path
+    path = path.strip().replace("\\", "/")
+
+    # Remove leading ./ or /
+    path = path.lstrip("./")
+
+    # Skip Librarian-owned files (config files, globals.css, layout.tsx, utils.ts)
+    if path in LIBRARIAN_OWNED_FILES:
+        return None
+
+    # Also check without src/ prefix
+    path_without_src = path[4:] if path.startswith("src/") else path
+    for owned in LIBRARIAN_OWNED_FILES:
+        owned_without_src = owned[4:] if owned.startswith("src/") else owned
+        if path_without_src == owned_without_src:
+            return None
+
+    # Source code directories that must live under src/
+    source_dirs = ["app/", "components/", "lib/", "hooks/", "types/", "styles/",
+                   "utils/", "services/", "context/", "providers/", "store/",
+                   "features/", "modules/", "pages/"]
+
+    # If path starts with a source directory but NOT src/, add the src/ prefix
+    if not path.startswith("src/"):
+        for src_dir in source_dirs:
+            if path.startswith(src_dir):
+                path = "src/" + path
+                break
+
+    # Root-level non-config files (like public/ assets) are fine as-is
+    return path
+
 
 class CodeSmithHandler:
     """
     Parses and commits the generated code files directly into the workspace.
+    Includes path normalization to prevent structural mismatches with the Librarian.
     """
     def __init__(self, workspace_root: str):
         self.root = workspace_root
@@ -50,20 +155,35 @@ class CodeSmithHandler:
     def commit_files(self, agent_output: str) -> List[str]:
         """
         Parses the CodeSmith's response and writes files to the local disk.
+        Normalizes all paths to ensure they land inside the Librarian's src/ structure.
+        Skips any Librarian-owned files the LLM tried to regenerate.
         """
         # Look for code blocks matching: ```tsx file="path/to/file.tsx"
-        file_blocks = re.findall(r'```(?:tsx|ts|css|js|json|md|html)?\s+file="([^"]+)"\n(.*?)\n```', agent_output, re.DOTALL)
-        
+        file_blocks = re.findall(
+            r'```(?:tsx|ts|css|js|jsx|json|md|html)?\s+file="([^"]+)"\n(.*?)\n```',
+            agent_output, re.DOTALL
+        )
+
         committed_files = []
-        for path, content in file_blocks:
-            full_path = os.path.join(self.root, path)
+        for raw_path, content in file_blocks:
+            # Normalize the path (add src/ prefix, block Librarian-owned files)
+            normalized_path = normalize_file_path(raw_path)
+
+            if normalized_path is None:
+                # This is a Librarian-owned file — skip it
+                print(f"[CodeSmith] SKIPPED Librarian-owned file: {raw_path}")
+                continue
+
+            full_path = os.path.join(self.root, normalized_path)
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            
+
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(content.strip())
-            committed_files.append(path)
-            
+            committed_files.append(normalized_path)
+            print(f"[CodeSmith] Committed: {raw_path} → {normalized_path}")
+
         return committed_files
+
 
 class CodeSmithAgent:
     """
@@ -76,7 +196,7 @@ class CodeSmithAgent:
         temperature: float = 0.2
     ):
         self.model_provider = model_provider
-        
+
         if model_provider == "openai":
             if not settings.OPENAI_API_KEY:
                 raise ValueError("OPENAI_API_KEY not configured")
@@ -111,26 +231,34 @@ class CodeSmithAgent:
             )
         else:
             raise ValueError(f"Unsupported model_provider: {model_provider}")
-            
+
     def generate_code_for_task(self, task: Dict[str, Any], project_id: str, context: Optional[str] = None) -> str:
         """
         Request implementation for a specific TodoManager task.
+        File paths in the task are normalized to use src/ prefix before being sent to the LLM.
         """
+        # Normalize file paths in the task to ensure they use src/
+        normalized_files = []
+        for f in task.get('files', []):
+            norm = normalize_file_path(f)
+            if norm:
+                normalized_files.append(norm)
+
         prompt = f"Implement the following task for project '{project_id}':\n\n"
         prompt += f"Task Name: {task.get('name')}\n"
         prompt += f"Description: {task.get('description')}\n"
-        prompt += f"Files to implement:\n"
-        for f in task.get('files', []):
+        prompt += f"Files to implement (use these EXACT paths with src/ prefix):\n"
+        for f in normalized_files:
             prompt += f"- {f}\n"
 
         if context:
             prompt += f"\nContext/Design Guidelines:\n{context}\n"
-            
+
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(content=prompt)
         ]
-        
+
         response = self.model.invoke(messages)
         return response.content
 

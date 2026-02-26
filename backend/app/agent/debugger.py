@@ -82,7 +82,9 @@ class DebuggerAgent:
     def _extract_fix(self, raw_output: str) -> Dict[str, Any]:
         """
         Regex extractor for the ---DEBUG_FIX_START--- payload.
+        Returns a safe fallback if extraction fails — NEVER raises.
         """
+        # Try primary delimiter extraction
         pattern = r"---DEBUG_FIX_START---\s*(?:```(?:json)?\s*)?(.*?)\s*(?:```\s*)?---DEBUG_FIX_END---"
         match = re.search(pattern, raw_output, re.DOTALL)
         
@@ -90,17 +92,35 @@ class DebuggerAgent:
             json_content = match.group(1)
             try:
                 return json.loads(json_content)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Found DEBUG_FIX but JSON is malformed: {e}\nRAW: {json_content}")
-        else:
-            json_block_pattern = r"```(?:json)?\s*(.*?)\s*```"
-            backup_match = re.search(json_block_pattern, raw_output, re.DOTALL)
-            if backup_match:
-                try:
-                    return json.loads(backup_match.group(1))
-                except json.JSONDecodeError:
-                    pass
-            raise ValueError(f"No valid Debug Fix list found in the agent's output. RAW: {raw_output}")
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback: Try to find any JSON block
+        json_block_pattern = r"```(?:json)?\s*(.*?)\s*```"
+        backup_match = re.search(json_block_pattern, raw_output, re.DOTALL)
+        if backup_match:
+            try:
+                return json.loads(backup_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback: Try to find raw JSON object in the text
+        json_obj_pattern = r'\{[^{}]*"root_cause"[^{}]*\}'
+        obj_match = re.search(json_obj_pattern, raw_output, re.DOTALL)
+        if obj_match:
+            try:
+                return json.loads(obj_match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+        # Safe fallback — use the raw text as the fix context
+        # This prevents the circuit breaker from tripping just because
+        # the Debugger LLM returned non-standard formatting
+        print(f"[Debugger] WARNING: Could not parse structured fix. Using raw text as context.")
+        return {
+            "root_cause": "Debugger analysis (unstructured): " + raw_output[:300],
+            "patch": raw_output,
+        }
 
     def analyze_and_fix(self, error_log: List[str], current_code: str, manifest: Dict[str, Any]) -> Dict[str, Any]:
         """

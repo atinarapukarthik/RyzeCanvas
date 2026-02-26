@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { fetchProjects, deleteProject } from "@/lib/api";
+import { fetchProjects, deleteProject, createProject } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import { useUIStore, DESIGN_THEMES, DesignTheme } from "@/stores/uiStore";
 import { Scene } from "@/components/ui/neon-raymarcher";
@@ -72,13 +72,23 @@ export default function DashboardPage() {
 
   const firstName = user?.name?.split(" ")[0] || "there";
 
-  const handleSend = useCallback((message: string, mode: "plan" | "build" = "build", options?: { webSearch?: boolean }) => {
-    const params = new URLSearchParams();
-    params.set('prompt', message);
-    params.set('mode', mode);
-    if (options?.webSearch) params.set('webSearch', 'true');
-    router.push(`/studio?${params.toString()}`);
-  }, [router]);
+  const handleSend = useCallback(async (message: string, mode: "plan" | "build" = "build", options?: { webSearch?: boolean }) => {
+    try {
+      const project = await createProject(message, {
+        provider: selectedModel?.provider || "gemini",
+        model: selectedModel?.id,
+        webSearchEnabled: options?.webSearch
+      });
+      const params = new URLSearchParams();
+      params.set('prompt', message);
+      params.set('mode', mode);
+      if (options?.webSearch) params.set('webSearch', 'true');
+      router.push(`/projects/${project.id}?${params.toString()}`);
+    } catch (error) {
+      toast.error("Failed to initialize project");
+      console.error(error);
+    }
+  }, [router, selectedModel]);
 
   const handleOpenProject = (projectId: string) => {
     router.push(`/projects/${projectId}`);
