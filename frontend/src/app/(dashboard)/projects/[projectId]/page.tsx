@@ -13,7 +13,6 @@ import {
     ListTodo,
     AlertTriangle,
     FolderTree,
-    Folder,
     FileCode,
     Rocket,
     ExternalLink,
@@ -70,7 +69,6 @@ export default function ProjectDashboard() {
 
     useEffect(() => {
         if (promptParam && !hasStarted && events.length === 0) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             setHasStarted(true);
             startOrchestration(promptParam);
         }
@@ -89,6 +87,7 @@ export default function ProjectDashboard() {
         if (pageIdx !== -1) {
             setActiveFileIndex(pageIdx);
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeFiles.length]);
 
     const currentFile = activeFiles[activeFileIndex] || null;
@@ -100,53 +99,7 @@ export default function ProjectDashboard() {
         currentFile.name.endsWith('.html')
     );
 
-    // Build Folder Tree
-    const fileTree = useMemo(() => {
-        const tree: Record<string, unknown> = {};
-        activeFiles.forEach((file, idx) => {
-            const parts = file.name.split('/');
-            let current: Record<string, unknown> = tree;
-            parts.forEach((part, i) => {
-                if (i === parts.length - 1) {
-                    current[part] = { _type: 'file', idx, name: file.name };
-                } else {
-                    if (!current[part]) current[part] = {};
-                    current = current[part] as Record<string, unknown>;
-                }
-            });
-        });
-        return tree;
-    }, [activeFiles]);
 
-    const renderTree = (node: Record<string, unknown>, path: string = ''): React.ReactNode => {
-        return Object.entries(node).map(([key, value]) => {
-            const val = value as { _type?: string; idx?: number; name?: string } & Record<string, unknown>;
-            if (val._type === 'file') {
-                const isActive = activeFileIndex === val.idx;
-                return (
-                    <button
-                        key={val.name}
-                        onClick={() => setActiveFileIndex(val.idx as number)}
-                        className={`flex items-center w-full text-left px-2 py-1 text-xs font-mono transition-colors rounded ${isActive ? 'bg-[#00f5ff]/20 text-[#00f5ff]' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'}`}
-                    >
-                        <FileCode className="w-3 h-3 mr-2 text-gray-500 shrink-0" />
-                        <span className="truncate">{key}</span>
-                    </button>
-                );
-            }
-            return (
-                <div key={path + key} className="ml-2">
-                    <div className="flex items-center px-1 py-1 text-xs font-mono text-gray-300 font-bold mt-1">
-                        <Folder className="w-3 h-3 mr-2 text-indigo-400 shrink-0" />
-                        {key}
-                    </div>
-                    <div className="border-l border-gray-800 ml-2 pl-1">
-                        {renderTree(val as Record<string, unknown>, path + key + '/')}
-                    </div>
-                </div>
-            );
-        });
-    };
 
     // Open in new tab using Blob URL (works without popup blockers)
     const openInNewTab = () => {
@@ -255,19 +208,6 @@ export default function ProjectDashboard() {
                 {/* Left Pane - File Explorer & Code Editor */}
                 <div className="flex bg-[#1a1a1a] rounded overflow-hidden border border-gray-800 shadow-xl">
 
-                    {/* File Explorer Sidebar */}
-                    <div className="w-48 bg-[#0a0a0a] border-r border-gray-800 flex-col hidden md:flex shrink-0">
-                        <div className="h-8 border-b border-gray-800 px-3 flex items-center text-xs font-mono text-gray-500 uppercase tracking-widest font-bold">
-                            <FolderTree className="w-4 h-4 mr-2 text-indigo-400" /> Workspace
-                        </div>
-                        <div className="flex-1 overflow-auto p-2">
-                            {activeFiles.length === 0 ? (
-                                <div className="text-xs text-gray-600 italic text-center mt-4">No files generated</div>
-                            ) : (
-                                renderTree(fileTree)
-                            )}
-                        </div>
-                    </div>
 
                     {/* Code Editor */}
                     <div className="flex-1 flex flex-col relative">
@@ -429,7 +369,7 @@ export default function ProjectDashboard() {
                                 </div>
                             ))}
                             {events.length === 0 && (
-                                <div className="text-gray-600 italic">// the system is dormant. Launch to begin.</div>
+                                <div className="text-gray-600 italic">The system is dormant. Launch to begin.</div>
                             )}
                         </div>
                     </div>

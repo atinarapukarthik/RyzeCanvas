@@ -14,7 +14,7 @@ interface AppLayoutProps {
 export function AppLayout({ children, hideTopNav = false }: AppLayoutProps) {
   const pathname = usePathname();
   const isDashboard = pathname === "/dashboard";
-  const { isAuthenticated, user, logout, setUser } = useAuthStore();
+  const { isAuthenticated, logout } = useAuthStore();
   const [isVerifying, setIsVerifying] = useState(false);
 
   useEffect(() => {
@@ -48,7 +48,7 @@ export function AppLayout({ children, hideTopNav = false }: AppLayoutProps) {
 
     verifySession();
     return () => { cancelled = true; };
-  }, [isAuthenticated, logout]);
+  }, [isAuthenticated, logout, isVerifying]);
 
   return (
     <ProtectedRoute>

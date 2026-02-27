@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* -------------------------------------------------------------------------- */
+/* Design System – CSS Variables                                             */
+/* -------------------------------------------------------------------------- */
+:root {
+  /* Colors */
+  --color-primary: #1D4ED8;          /* Primary brand color */
+  --color-bg-dark: #111827;         /* Dark background */
+  --color-surface: #F3F4F6;          /* Neutral surface */
+  --color-accent: #F59E0B;           /* Accent color */
+
+  /* Typography */
+  --font-heading: 'Inter', sans-serif;
+  --font-body: 'Roboto', sans-serif;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Global Base Styles                                                       */
+/* -------------------------------------------------------------------------- */
+html,
+body {
+  @apply min-h-screen antialiased;
+  background-color: var(--color-bg-dark);
+  color: var(--color-surface);
+  font-family: var(--font-body);
+}
+
+/* Ensure headings use the heading font */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading);
+}
+
+/* Utility classes for easy access to the design tokens */
+@layer utilities {
+  .bg-primary {
+    @apply bg-[var(--color-primary)];
+  }
+  .bg-accent {
+    @apply bg-[var(--color-accent)];
+  }
+  .text-primary {
+    @apply text-[var(--color-primary)];
+  }
+  .text-accent {
+    @apply text-[var(--color-accent)];
+  }
+  .font-heading {
+    @apply font-[var(--font-heading)];
+  }
+  .font-body {
+    @apply font-[var(--font-body)];
+  }
+}

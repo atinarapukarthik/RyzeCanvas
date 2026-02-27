@@ -9,7 +9,7 @@ import { PromptBox } from "@/components/ui/prompt-box";
 import { DynamicRenderer } from "@/components/DynamicRenderer";
 import { TerminalPanel } from "@/components/TerminalPanel";
 import { useUIStore } from "@/stores/uiStore";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore, ScaffoldPhase } from "@/stores/terminalStore";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { createProject, searchWeb, updateProject, streamChat, fetchProjects, fetchProject } from "@/lib/api";
 import { toast } from "sonner";
@@ -1599,6 +1599,7 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
         if (savedProjectName) {
             setProjectName(savedProjectName);
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchParams, projectId, getContextId]);
 
     // Persist projectId to sessionStorage so it survives page reloads
@@ -1796,7 +1797,7 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
         };
         window.addEventListener('message', handleMessage);
         return () => window.removeEventListener('message', handleMessage);
-    }, [allGeneratedFiles]); // minimal deps to keep listener fresh
+    }, [allGeneratedFiles, terminalStore]); // minimal deps to keep listener fresh
 
     // Clear error when code changes (including file updates from auto-fix)
     useEffect(() => {
@@ -1874,7 +1875,7 @@ INSTRUCTIONS:
         return () => {
             if (autoFixTimerRef.current) clearTimeout(autoFixTimerRef.current);
         };
-    }, [previewError, generating, allGeneratedFiles]);
+    }, [previewError, generating, allGeneratedFiles, terminalStore]);
 
     // Reset auto-fix counter only when the USER initiates a new generation
     // (not when auto-fix itself triggers a chat request, which also sets generating=true).
@@ -1915,7 +1916,7 @@ INSTRUCTIONS:
         }
     }, [generatedCode, previousCode]);
 
-    const handleSend = useCallback(async (promptMessage?: string, modeArg?: "plan" | "build" | "chat", options?: { webSearch?: boolean }) => {
+    const handleSend = useCallback(async (promptMessage?: string, modeArg?: "plan" | "build" | "chat") => {
         const prompt = promptMessage || input;
         // Use ref for guard check — state is batched and can be stale if
         // handleSend is called twice before React re-renders.
@@ -1991,7 +1992,6 @@ INSTRUCTIONS:
 
         // AUTO-INJECT ERROR CONTEXT
         // If there is a visible preview error, append it to the prompt context so the AI knows.
-        let augmentedPrompt = prompt;
         if (previewError) {
             console.log("Injecting preview error into context:", previewError);
             // We don't change the UI message (user shouldn't see ugly error dumps), 
@@ -2178,7 +2178,7 @@ DESIGN REQUIREMENTS:
                             'executing command': 'shell',
                             'all actions completed': 'complete',
                         };
-                        const phase = phaseMap[phaseLabel] as any;
+                        const phase = phaseMap[phaseLabel as keyof typeof phaseMap] as ScaffoldPhase;
                         if (phase) {
                             terminalStore.setPhase(phase);
                             terminalStore.addEntry('phase', step, undefined, phase);
@@ -2254,7 +2254,7 @@ DESIGN REQUIREMENTS:
                 onInstall: (statuses) => {
                     setImplementationStatus((prev) => prev ? { ...prev, installingLibraries: statuses, phase: 'installing' } : null);
                     statuses.forEach((s: { name: string; status: string; phase?: string }) => {
-                        terminalStore.addEntry('install', `${s.name} ${s.status}`, undefined, (s.phase as any) || 'install');
+                        terminalStore.addEntry('install', `${s.name} ${s.status}`, undefined, (s.phase as ScaffoldPhase) || 'install');
                     });
                 },
 
@@ -2263,7 +2263,7 @@ DESIGN REQUIREMENTS:
                     // Store completed files and show latest in preview
                     // NOTE: Backend sends 'completed' or 'written'. We handle both for robustness.
                     const completedFiles = statuses.filter((s: FileUpdateStatus) =>
-                        (s.status === 'completed' || s.status as any === 'written') && s.code
+                        (s.status === 'completed' || (s.status as string) === 'written') && s.code
                     );
 
                     if (completedFiles.length > 0) {
@@ -2279,7 +2279,7 @@ DESIGN REQUIREMENTS:
                         setActiveTab('preview');
                     }
                     statuses.forEach((s: FileUpdateStatus & { phase?: string }) => {
-                        terminalStore.addEntry('file', `${s.path} [${s.status}]`, undefined, (s.phase as any) || undefined);
+                        terminalStore.addEntry('file', `${s.path} [${s.status}]`, undefined, (s.phase as ScaffoldPhase) || undefined);
                     });
                 },
 
@@ -2303,7 +2303,7 @@ DESIGN REQUIREMENTS:
                         'command',
                         `$ ${result.command}`,
                         result.formatted || result.stdout || result.error || '',
-                        (result.phase as any) || undefined
+                        (result.phase as ScaffoldPhase) || undefined
                     );
 
                     // Also append to the streaming message for visibility
@@ -2537,7 +2537,7 @@ DESIGN REQUIREMENTS:
                 }, 0);
             }
         }
-    }, [input, searchParams, chatMode, selectedModel, generatedCode, previousCode, projectId, migrateSessionToProject, allGeneratedFiles, webSearchEnabled, flushTokenBuffer]);
+    }, [input, searchParams, chatMode, selectedModel, generatedCode, previousCode, projectId, migrateSessionToProject, allGeneratedFiles, webSearchEnabled, flushTokenBuffer, designTheme, initialProjectId, initialPrompt, previewError, router, terminalStore]);
 
     // Set the handleSend ref for auto-sending from Dashboard
     useEffect(() => {
@@ -2619,7 +2619,7 @@ DESIGN REQUIREMENTS:
                             'executing command': 'shell',
                             'all actions completed': 'complete',
                         };
-                        const phase = phaseMap[phaseLabel] as any;
+                        const phase = phaseMap[phaseLabel as keyof typeof phaseMap] as ScaffoldPhase;
                         if (phase) {
                             terminalStore.setPhase(phase);
                             terminalStore.addEntry('phase', step, undefined, phase);
@@ -2663,7 +2663,7 @@ DESIGN REQUIREMENTS:
                 onCommand: (result) => {
                     const commandOutput = `$ ${result.command}\n${result.formatted || result.stdout || result.error || ''}`;
                     setThinkingSteps((s) => [...s, commandOutput]);
-                    terminalStore.addEntry('command', `$ ${result.command}`, result.formatted || result.stdout || result.error || '', (result.phase as any) || undefined);
+                    terminalStore.addEntry('command', `$ ${result.command}`, result.formatted || result.stdout || result.error || '', (result.phase as ScaffoldPhase) || undefined);
                 },
 
                 onLogAnalysis: (analysis) => {
@@ -2782,7 +2782,7 @@ DESIGN REQUIREMENTS:
                             'executing command': 'shell',
                             'all actions completed': 'complete',
                         };
-                        const phase = phaseMap[phaseLabel] as any;
+                        const phase = phaseMap[phaseLabel as keyof typeof phaseMap] as ScaffoldPhase;
                         if (phase) {
                             terminalStore.setPhase(phase);
                             terminalStore.addEntry('phase', step, undefined, phase);
@@ -2797,7 +2797,7 @@ DESIGN REQUIREMENTS:
                 onInstall: (statuses) => {
                     setImplementationStatus((prev) => prev ? { ...prev, installingLibraries: statuses, phase: 'installing' } : null);
                     statuses.forEach((s: { name: string; status: string; phase?: string }) => {
-                        terminalStore.addEntry('install', `${s.name} ${s.status}`, undefined, (s.phase as any) || 'install');
+                        terminalStore.addEntry('install', `${s.name} ${s.status}`, undefined, (s.phase as ScaffoldPhase) || 'install');
                     });
                 },
 
@@ -2813,7 +2813,7 @@ DESIGN REQUIREMENTS:
                         setActiveTab('preview');
                     }
                     statuses.forEach((s: FileUpdateStatus & { phase?: string }) => {
-                        terminalStore.addEntry('file', `${s.path} [${s.status}]`, undefined, (s.phase as any) || undefined);
+                        terminalStore.addEntry('file', `${s.path} [${s.status}]`, undefined, (s.phase as ScaffoldPhase) || undefined);
                     });
                 },
 
@@ -2830,7 +2830,7 @@ DESIGN REQUIREMENTS:
                 onCommand: (result) => {
                     const commandOutput = `$ ${result.command}\n${result.formatted || result.stdout || result.error || ''}`;
                     setThinkingSteps((s) => [...s, commandOutput]);
-                    terminalStore.addEntry('command', `$ ${result.command}`, result.formatted || result.stdout || result.error || '', (result.phase as any) || undefined);
+                    terminalStore.addEntry('command', `$ ${result.command}`, result.formatted || result.stdout || result.error || '', (result.phase as ScaffoldPhase) || undefined);
                 },
 
                 onLogAnalysis: (analysis) => {
@@ -3060,7 +3060,7 @@ INSTRUCTIONS:
         const cb = () => handleFixErrorRef.current();
         terminalStore.setOnFixError(cb);
         return () => terminalStore.setOnFixError(null);
-    }, []);
+    }, [terminalStore]);
 
     // ── Performance: deferred preview HTML ──
     // buildPreviewHtml() is an expensive synchronous operation (heavy regex on
