@@ -21,10 +21,13 @@ async def init_db():
 
     # Create all tables
     async with engine.connect() as conn:
-        curr_user = await conn.execute(text("SELECT current_user"))
-        search_path = await conn.execute(text("SHOW search_path"))
-        print(
-            f"[DB] Debug: User={curr_user.fetchone()[0]}, Path={search_path.fetchone()[0]}")
+        try:
+            curr_user = await conn.execute(text("SELECT current_user"))
+            search_path = await conn.execute(text("SHOW search_path"))
+            print(
+                f"[DB] Debug: User={curr_user.fetchone()[0]}, Path={search_path.fetchone()[0]}")
+        except Exception as e:
+            print(f"[DB] Optional postgres check failed (expected if using SQLite): {e}")
 
     print(f"[DB] Creating tables for: {list(Base.metadata.tables.keys())}")
     async with engine.begin() as conn:

@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* -------------------------------------------------------------------------- */
+/* Design‑system base styles                                                 */
+/* -------------------------------------------------------------------------- */
+
+/* Apply the background and default text colour from the design system */
+html {
+  @apply bg-[var(--color-bg-dark)] text-[var(--color-primary)];
+  font-family: var(--font-body);
+}
+
+/* Headings use the designated heading font */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading);
+}
+
+/* Ensure the surface colour is available as a utility class */
+@layer utilities {
+  .bg-surface {
+    background-color: var(--color-surface);
+  }
+  .text-accent {
+    color: var(--color-accent);
+  }
+}

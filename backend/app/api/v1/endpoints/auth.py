@@ -173,7 +173,14 @@ async def login(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         # Create a User object (shim)
-        user = User(**user_data)
+        user = User(
+            id=user_data.get("id"),
+            email=user_data.get("email"),
+            hashed_password=user_data.get("hashed_password", ""),
+            full_name=user_data.get("full_name", ""),
+            role=user_data.get("role", "user"),
+            is_active=user_data.get("is_active", True),
+        )
 
     if not user.is_active:
         raise HTTPException(
