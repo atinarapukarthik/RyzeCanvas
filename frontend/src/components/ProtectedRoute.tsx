@@ -30,6 +30,7 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const redirectingRef = useRef(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true);
   }, []);
 

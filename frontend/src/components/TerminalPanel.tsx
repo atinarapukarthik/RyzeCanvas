@@ -21,7 +21,6 @@ import {
   Zap,
   Brain,
   CheckCircle2,
-  AtSign,
   Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";

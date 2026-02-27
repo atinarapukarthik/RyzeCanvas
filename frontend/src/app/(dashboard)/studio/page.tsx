@@ -1283,9 +1283,9 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
     const [iframeKey, setIframeKey] = useState(0);
     const [previewError, setPreviewError] = useState<{ message: string; stack?: string; source?: string; line?: number; column?: number } | null>(null);
     const [errorModalOpen, setErrorModalOpen] = useState(false);
-    const [autoFixAttempts, setAutoFixAttempts] = useState(0);
+
     const autoFixAttemptsRef = useRef(0);
-    const [isAutoFixing, setIsAutoFixing] = useState(false);
+
     const isAutoFixingRef = useRef(false);
     const autoFixTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [archivesModalOpen, setArchivesModalOpen] = useState(false);
@@ -1501,6 +1501,7 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
                 // Failed to load project
             });
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchParams, initialProjectId, initialPrompt]);
 
     // Load chat history from localStorage on mount (only if not a new session and no project loaded)
@@ -1822,9 +1823,9 @@ export function StudioContent({ initialProjectId, initialPrompt, initialMode }: 
 
             // Lock immediately via refs before any async work
             isAutoFixingRef.current = true;
-            setIsAutoFixing(true);
             autoFixAttemptsRef.current += 1;
-            setAutoFixAttempts(autoFixAttemptsRef.current);
+
+
 
             terminalStore.addEntry('info', `Detected runtime error. Auto-fixing (attempt ${autoFixAttemptsRef.current}/3)...`);
 
@@ -1880,12 +1881,10 @@ INSTRUCTIONS:
     useEffect(() => {
         if (generating && !isAutoFixingRef.current) {
             autoFixAttemptsRef.current = 0;
-            setAutoFixAttempts(0);
         }
         // When generation finishes, reset isAutoFixing so the effect can re-evaluate.
         if (!generating && isAutoFixingRef.current) {
             isAutoFixingRef.current = false;
-            setIsAutoFixing(false);
         }
     }, [generating]);
 
@@ -2098,8 +2097,7 @@ DESIGN REQUIREMENTS:
                 setPreviewError(null);
                 setAllGeneratedFiles({});
                 setGeneratedCode('');
-                setAutoFixAttempts(0);
-                setIsAutoFixing(false);
+
                 if (autoFixTimerRef.current) {
                     clearTimeout(autoFixTimerRef.current);
                     autoFixTimerRef.current = null;

@@ -33,8 +33,9 @@ export const AnimatedTooltip = ({
     useTransform(x, [-100, 100], [-50, 50]),
     springConfig
   );
-  const handleMouseMove = (event: any) => {
-    const halfWidth = event.target.offsetWidth / 2;
+  const handleMouseMove = (event: React.MouseEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    const halfWidth = target.offsetWidth / 2;
     x.set(event.nativeEvent.offsetX - halfWidth);
   };
 

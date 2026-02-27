@@ -1,10 +1,9 @@
 "use client"
 
 import { FileIcon } from "lucide-react"
-import { useTheme } from "next-themes"
-import { useEffect, useState } from "react"
+import { useMemo } from "react"
 import { motion } from "framer-motion"
-import { diffLines, Change } from "diff"
+import { diffLines } from "diff"
 import { cn } from "@/lib/utils"
 
 interface CodeComparisonProps {
@@ -23,13 +22,11 @@ export function CodeComparison({
 	afterCode,
 	filename = "code.tsx",
 }: CodeComparisonProps) {
-	const [diffs, setDiffs] = useState<Change[]>([])
-
-	useEffect(() => {
+	const diffs = useMemo(() => {
 		if (beforeCode || afterCode) {
-			const changes = diffLines(beforeCode || "", afterCode || "")
-			setDiffs(changes)
+			return diffLines(beforeCode || "", afterCode || "")
 		}
+		return []
 	}, [beforeCode, afterCode])
 
 	return (

@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { fetchProjects, deleteProject, createProject } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
-import { useUIStore, DESIGN_THEMES, DesignTheme } from "@/stores/uiStore";
+import { useUIStore, DESIGN_THEMES } from "@/stores/uiStore";
 import { Scene } from "@/components/ui/neon-raymarcher";
 import { PromptBox } from "@/components/ui/prompt-box";
 import {

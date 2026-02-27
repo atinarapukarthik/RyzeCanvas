@@ -56,11 +56,6 @@ export function SignUp({ onSubmit, onSignInClick, className }: SignUpProps) {
 		}
 	};
 
-	const handleKeyPress = (e: React.KeyboardEvent) => {
-		if (e.key === "Enter") {
-			handleSignUp();
-		}
-	};
 
 	const handleGoogleSignUp = async () => {
 		setError("");

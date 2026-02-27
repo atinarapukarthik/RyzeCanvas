@@ -70,6 +70,7 @@ export default function ProjectDashboard() {
 
     useEffect(() => {
         if (promptParam && !hasStarted && events.length === 0) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setHasStarted(true);
             startOrchestration(promptParam);
         }

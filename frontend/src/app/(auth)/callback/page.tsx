@@ -24,6 +24,7 @@ function AuthCallbackContent() {
 		const errorParam = searchParams.get("error");
 
 		if (errorParam) {
+			// eslint-disable-next-line react-hooks/set-state-in-effect
 			setError(decodeURIComponent(errorParam).replace(/_/g, " "));
 			return;
 		}
