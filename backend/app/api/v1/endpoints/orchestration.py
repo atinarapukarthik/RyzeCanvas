@@ -27,6 +27,8 @@ class ConnectionManager:
     def __init__(self):
         # Maps project_id to list of active websockets
         self.active_connections: Dict[str, List[WebSocket]] = {}
+        # Track which projects currently have an orchestration running
+        self.running_orchestrations: set = set()
 
     async def connect(self, websocket: WebSocket, project_id: str):
         await websocket.accept()
@@ -44,11 +46,15 @@ class ConnectionManager:
     async def broadcast_to_project(self, project_id: str, message: dict):
         if project_id in self.active_connections:
             connections = list(self.active_connections[project_id])
+            dead = []
             for connection in connections:
                 try:
                     await connection.send_json(message)
-                except:
-                    pass
+                except Exception:
+                    dead.append(connection)
+            for d in dead:
+                if project_id in self.active_connections and d in self.active_connections[project_id]:
+                    self.active_connections[project_id].remove(d)
 
 manager = ConnectionManager()
 
@@ -58,19 +64,34 @@ async def websocket_endpoint(websocket: WebSocket, project_id: str):
     try:
         while True:
             data = await websocket.receive_text()
-            message = json.loads(data)
+            try:
+                message = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+
             if message.get("type") == "start":
-                asyncio.create_task(run_real_orchestration(project_id, message.get("prompt", "Demo prompt")))
+                prompt = message.get("prompt", "Generate a basic UI component")
+                if project_id in manager.running_orchestrations:
+                    await websocket.send_json({
+                        "type": "log",
+                        "message": "⚠️ Orchestration already running for this project. Please wait."
+                    })
+                else:
+                    asyncio.create_task(run_real_orchestration(project_id, prompt))
     except WebSocketDisconnect:
         manager.disconnect(websocket, project_id)
     except Exception as e:
+        print(f"[WS] Error for project {project_id}: {e}")
         manager.disconnect(websocket, project_id)
 
 async def run_real_orchestration(project_id: str, prompt: str):
+    manager.running_orchestrations.add(project_id)
+
     async def send(msg_type: str, payload: dict):
         payload["type"] = msg_type
         await manager.broadcast_to_project(project_id, payload)
-        await asyncio.sleep(0.5)
+        # Small yield to allow WebSocket frames to flush without blocking long
+        await asyncio.sleep(0.05)
 
     workspace_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "test_workspace_loop", project_id)
     if os.path.exists(workspace_root):
@@ -320,14 +341,26 @@ async def run_real_orchestration(project_id: str, prompt: str):
                 break
         
         if final_code:
-            client = supabase_admin or supabase
-            client.table("projects").update({"code_json": final_code}).eq("id", project_id).execute()
-            await send("log", {"message": f"Project {project_id} synced back to Database."})
+            try:
+                client = supabase_admin or supabase
+                if client:
+                    client.table("projects").update({"code_json": final_code}).eq("id", project_id).execute()
+                    await send("log", {"message": f"Project {project_id} synced back to Database."})
+            except Exception as e:
+                # Log but do not crash the orchestrated success loop
+                print(f"Warning: Could not sync final code to Supabase: {e}")
+                await send("log", {"message": "⚠️ Notice: Generated code exists but could not be saved to cloud database due to network timeout."})
 
     except Exception as e:
-        await send("log", {"message": f"❌ Orchestration Error: {str(e)}"})
         import traceback
         traceback.print_exc()
+        try:
+            await send("log", {"message": f"❌ Orchestration Error: {str(e)[:500]}"})
+        except Exception:
+            pass
+    finally:
+        # Always clear the running flag so client can re-trigger
+        manager.running_orchestrations.discard(project_id)
 
 @router.post("/start/{project_id}")
 async def trigger_orchestration(project_id: str, request: StartOrchestrationRequest, background_tasks: BackgroundTasks):

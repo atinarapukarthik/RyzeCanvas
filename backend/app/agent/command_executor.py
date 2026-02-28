@@ -261,9 +261,18 @@ def format_command_output(result: CommandResult, max_lines: int = 50) -> str:
 # ──────────────────────────────────────────────────
 
 async def check_node_installed() -> bool:
-    """Check if Node.js is installed."""
-    result = await execute_command("node --version", timeout=10)
-    return result.success
+    """Check if Node.js is installed by looking it up in PATH directly."""
+    import shutil
+    # Fast path: check PATH without spawning a subprocess (which fails on
+    # some Windows environments when the venv PATH doesn't include Node)
+    if shutil.which("node"):
+        return True
+    # Slow path: actually run node --version as a subprocess fallback
+    try:
+        result = await execute_command("node --version", timeout=10)
+        return bool(result.success and result.stdout.strip().startswith("v"))
+    except Exception:
+        return False
 
 
 async def check_npm_installed() -> bool:

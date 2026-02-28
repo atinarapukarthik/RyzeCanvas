@@ -41,14 +41,16 @@ def test_database_models_integrity():
     from app.models.user import User
     from app.models.project import Project
     
-    # Check User model
-    assert hasattr(User, 'email')
-    assert hasattr(User, 'hashed_password')
-    assert hasattr(User, 'projects')
+    # Check User model has required attributes
+    assert hasattr(User, 'email'), "User model missing 'email' column"
+    assert hasattr(User, 'hashed_password'), "User model missing 'hashed_password' column"
+    assert hasattr(User, 'projects'), "User model missing 'projects' relationship"
     
-    # Check Project model
-    assert hasattr(Project, 'title')
-    assert hasattr(Project, 'code_json')
-    assert hasattr(Project, 'owner')
+    # Check Project model has required attributes
+    # Project uses 'name' column (title is mapped via API layer)
+    assert hasattr(Project, 'name'), "Project model missing 'name' column"
+    assert hasattr(Project, 'code_json'), "Project model missing 'code_json' column"
+    assert hasattr(Project, 'owner'), "Project model missing 'owner' relationship"
+    assert hasattr(Project, 'user_id'), "Project model missing 'user_id' foreign key"
     
     print("✅ Database models integrity check passed")

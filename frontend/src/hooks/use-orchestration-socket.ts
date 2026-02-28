@@ -21,10 +21,12 @@ export function useOrchestrationSocket(projectId: string) {
     const [events, setEvents] = useState<OrchestrationEvent[]>([]);
     const [currentNode, setCurrentNode] = useState<string>('Architect');
     const [files, setFiles] = useState<Record<string, string>>({});
-    const [buildStatus, setBuildStatus] = useState<'pending' | 'FAIL' | 'PASS'>('pending');
+    const [buildStatus, setBuildStatus] = useState<'idle' | 'running' | 'FAIL' | 'PASS'>('idle');
     const [buildErrors, setBuildErrors] = useState<string[]>([]);
     const [healingPulse, setHealingPulse] = useState(false);
     const [circuitBreakerAlert, setCircuitBreakerAlert] = useState(false);
+    const [isConnected, setIsConnected] = useState(false);
+    const [isRunning, setIsRunning] = useState(false);
 
     const socketRef = useRef<WebSocket | null>(null);
 
@@ -33,64 +35,90 @@ export function useOrchestrationSocket(projectId: string) {
 
         // Use environment variable or default to localhost
         const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-        const wsUrl = backendUrl.replace(/^https?:\/\//i, (match) => match.toLowerCase() === 'https://' ? 'wss://' : 'ws://') + `/orchestration/ws/${projectId}`;
+        const wsUrl = backendUrl.replace(/^https?:\/\//i, (match) =>
+            match.toLowerCase() === 'https://' ? 'wss://' : 'ws://'
+        ) + `/orchestration/ws/${projectId}`;
 
-        socketRef.current = new WebSocket(wsUrl);
+        const ws = new WebSocket(wsUrl);
+        socketRef.current = ws;
 
-        socketRef.current.onopen = () => {
-            console.log('Connected to Orchestration Socket', projectId);
+        ws.onopen = () => {
+            console.log('[WS] Connected to Orchestration Socket', projectId);
+            setIsConnected(true);
         };
 
-        socketRef.current.onmessage = (event) => {
-            const data = JSON.parse(event.data) as OrchestrationEvent;
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data) as OrchestrationEvent;
 
-            setEvents((prev) => [...prev, data]);
+                setEvents((prev) => [...prev, data]);
 
-            if (data.type === 'node_change' && data.node) {
-                setCurrentNode(data.node);
-                if (data.node !== 'Debugger') setHealingPulse(false);
-            } else if (data.type === 'file_commit' && data.fileName && data.code) {
-                setFiles((prev) => ({ ...prev, [data.fileName!]: data.code! }));
-            } else if (data.type === 'build_status' && data.status) {
-                setBuildStatus(data.status as 'FAIL' | 'PASS');
-                if (data.errors) {
-                    setBuildErrors(data.errors);
+                if (data.type === 'node_change' && data.node) {
+                    setCurrentNode(data.node);
+                    if (data.node !== 'Debugger') setHealingPulse(false);
+                } else if (data.type === 'file_commit' && data.fileName && data.code) {
+                    setFiles((prev) => ({ ...prev, [data.fileName!]: data.code! }));
+                } else if (data.type === 'build_status' && data.status) {
+                    setBuildStatus(data.status as 'FAIL' | 'PASS');
+                    if (data.errors) {
+                        setBuildErrors(data.errors);
+                    }
+                } else if (data.type === 'pulse_status' && data.status === 'healing') {
+                    setHealingPulse(true);
+                } else if (data.type === 'alert' && data.status === 'circuit_breaker') {
+                    setCircuitBreakerAlert(true);
+                } else if (data.type === 'log' && data.message?.includes('ALL TASKS COMPLETE')) {
+                    setIsRunning(false);
                 }
-            } else if (data.type === 'pulse_status' && data.status === 'healing') {
-                setHealingPulse(true);
-            } else if (data.type === 'alert' && data.status === 'circuit_breaker') {
-                setCircuitBreakerAlert(true);
+            } catch (e) {
+                console.error('[WS] Failed to parse message', e);
             }
         };
 
-        socketRef.current.onclose = () => {
-            console.log('Disconnected from Orchestration Socket');
+        ws.onerror = () => {
+            console.warn('[WS] WebSocket disconnected or encountered an error.');
+            setIsConnected(false);
+        };
+
+        ws.onclose = () => {
+            console.log('[WS] Disconnected from Orchestration Socket');
+            setIsConnected(false);
+            setIsRunning(false);
         };
 
         return () => {
-            if (socketRef.current) {
-                socketRef.current.close();
-            }
+            ws.close();
         };
     }, [projectId]);
 
-    const startOrchestration = useCallback(async (promptText?: string) => {
-        const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-        try {
-            await fetch(`${backendUrl}/orchestration/start/${projectId}`, {
+    const startOrchestration = useCallback((promptText?: string) => {
+        // Reset state BEFORE sending the request to avoid race conditions
+        setEvents([]);
+        setFiles({});
+        setBuildStatus('running');
+        setBuildErrors([]);
+        setHealingPulse(false);
+        setCircuitBreakerAlert(false);
+        setCurrentNode('Architect');
+        setIsRunning(true);
+
+        const ws = socketRef.current;
+
+        // Prefer direct WebSocket message (no HTTP race condition)
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'start', prompt: promptText || 'Generate a basic UI component' }));
+        } else {
+            // Fallback to HTTP POST if WS isn't open yet
+            const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+            fetch(`${backendUrl}/orchestration/start/${projectId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: promptText || "Generate a basic UI component" }),
+                body: JSON.stringify({ prompt: promptText || 'Generate a basic UI component' }),
+            }).catch((err) => {
+                console.error('[Orchestration] Failed to start via HTTP', err);
+                setIsRunning(false);
+                setBuildStatus('idle');
             });
-            // Optionally reset states before a new run
-            setEvents([]);
-            setFiles({});
-            setBuildStatus('pending');
-            setBuildErrors([]);
-            setHealingPulse(false);
-            setCircuitBreakerAlert(false);
-        } catch (err) {
-            console.error('Failed to start orchestration', err);
         }
     }, [projectId]);
 
@@ -102,6 +130,8 @@ export function useOrchestrationSocket(projectId: string) {
         buildErrors,
         healingPulse,
         circuitBreakerAlert,
+        isConnected,
+        isRunning,
         startOrchestration,
     };
 }

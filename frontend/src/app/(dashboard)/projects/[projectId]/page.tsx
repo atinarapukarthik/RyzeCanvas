@@ -16,14 +16,19 @@ import {
     FileCode,
     Rocket,
     ExternalLink,
-    RefreshCw
+    RefreshCw,
+    Monitor,
+    Globe,
+    Sparkles,
+    Loader2
 } from 'lucide-react';
 import { useOrchestrationSocket } from '@/hooks/use-orchestration-socket';
-import { buildPreviewHtml } from '@/app/(dashboard)/studio/page';
-import { Space_Grotesk, Inter } from 'next/font/google';
+import { buildPreviewHtml } from '@/lib/preview-builder';
+import { Space_Grotesk, Inter, JetBrains_Mono } from 'next/font/google';
 
 const spaceGrotesk = Space_Grotesk({ subsets: ['latin'] });
 const inter = Inter({ subsets: ['latin'] });
+const jetBrainsMono = JetBrains_Mono({ subsets: ['latin'] });
 
 const NODES = [
     { id: 'Architect', label: 'Architect', icon: BrainCircuit },
@@ -50,6 +55,8 @@ export default function ProjectDashboard() {
         buildErrors,
         healingPulse,
         circuitBreakerAlert,
+        isConnected,
+        isRunning,
         startOrchestration,
     } = useOrchestrationSocket(projectId);
 
@@ -62,9 +69,25 @@ export default function ProjectDashboard() {
 
     const [hasStarted, setHasStarted] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
+    const [viewMode, setViewMode] = useState<'preview' | 'code'>('preview');
+    const [chatInput, setChatInput] = useState('');
 
     const handleRefresh = () => {
         setRefreshKey(prev => prev + 1);
+    };
+
+    const handleReportBug = () => {
+        const bugDesc = window.prompt("Describe the bug for the AI to fix:");
+        if (bugDesc) {
+            startOrchestration(`FIX BUG: ${bugDesc}\n\nExisting files are provided in context.`);
+        }
+    };
+
+    const handleChatSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!chatInput.trim()) return;
+        startOrchestration(chatInput.trim());
+        setChatInput('');
     };
 
     useEffect(() => {
@@ -132,14 +155,24 @@ export default function ProjectDashboard() {
                     </h1>
                     <p className="text-sm text-gray-400 mt-1">Project ID: {projectId}</p>
                 </div>
-                <button
-                    onClick={() => startOrchestration(promptParam)}
-                    className="flex items-center space-x-2 bg-[#00f5ff] text-[#0a0a0a] px-4 py-2 text-sm font-semibold rounded hover:bg-[#00d0d8] transition-colors focus:ring-2 focus:ring-[#00f5ff] focus:ring-offset-2 focus:ring-offset-[#0a0a0a]"
-                    aria-label="Start Orchestration"
-                >
-                    <Play className="w-4 h-4" />
-                    <span>Launch AI Orchestration</span>
-                </button>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={handleReportBug}
+                        className="flex items-center space-x-2 bg-amber-500/10 text-amber-500 border border-amber-500/20 px-4 py-2 text-sm font-semibold rounded hover:bg-amber-500/20 transition-all"
+                    >
+                        <AlertTriangle className="w-4 h-4" />
+                        <span>Report Bug to AI</span>
+                    </button>
+                    <button
+                        onClick={() => startOrchestration(promptParam)}
+                        disabled={isRunning}
+                        className="flex items-center space-x-2 bg-[#00f5ff] text-[#0a0a0a] px-4 py-2 text-sm font-semibold rounded hover:bg-[#00d0d8] transition-colors focus:ring-2 focus:ring-[#00f5ff] focus:ring-offset-2 focus:ring-offset-[#0a0a0a] shadow-[0_0_15px_rgba(0,245,255,0.3)] disabled:opacity-50"
+                        aria-label="Start Orchestration"
+                    >
+                        {isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                        <span>{isRunning ? 'Orchestrating...' : 'Launch AI Orchestration'}</span>
+                    </button>
+                </div>
             </header>
 
             {/* Stepper & Alert Strip */}
@@ -202,178 +235,197 @@ export default function ProjectDashboard() {
                 </div>
             </section>
 
-            {/* Main Dual-Pane & Terminal */}
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 pb-4 overflow-hidden">
+            {/* Main Workspace (3rd Gen Layout) */}
+            <div className="flex-1 grid grid-cols-12 gap-4 overflow-hidden mb-2">
 
-                {/* Left Pane - File Explorer & Code Editor */}
-                <div className="flex bg-[#1a1a1a] rounded overflow-hidden border border-gray-800 shadow-xl">
-
-
-                    {/* Code Editor */}
-                    <div className="flex-1 flex flex-col relative">
-                        <div className="border-b border-gray-800 bg-[#0a0a0a] h-8 px-3 flex items-center">
-                            {currentFile ? (
-                                <span className="text-xs font-mono text-gray-300 flex items-center">
-                                    <FileCode className="w-4 h-4 mr-2" /> {currentFile.name}
-                                </span>
-                            ) : (
-                                <span className="text-xs font-mono text-gray-600">EDITOR</span>
-                            )}
-                        </div>
-                        <div className="flex-1 overflow-auto p-4 bg-[#0a0a0a] font-mono text-xs text-gray-300 relative">
-                            {currentFile ? (
-                                <pre className="whitespace-pre-wrap leading-relaxed">{currentFile.content}</pre>
-                            ) : (
-                                <div className="absolute inset-0 flex flex-col items-center justify-center opacity-30 text-center">
-                                    <Code2 className="w-16 h-16 mb-4" />
-                                    <p className={`text-xl ${spaceGrotesk.className}`}>AWAITING CODE INFUSION</p>
-                                </div>
-                            )}
-                        </div>
+                {/* ── Column 1: Explorer ── */}
+                <aside className="col-span-2 bg-[#0d0d12] rounded-xl border border-white/[0.08] flex flex-col overflow-hidden shadow-lg">
+                    <div className="h-10 bg-[#12121a] border-b border-white/[0.08] flex items-center px-4 gap-2">
+                        <FolderTree className="w-4 h-4 text-[#00f5ff]/60" />
+                        <span className="text-[11px] font-bold uppercase tracking-widest text-white/40">Explorer</span>
                     </div>
-                </div>
-
-                {/* Right Pane - Build Preview & Terminal */}
-                <div className="flex flex-col gap-4 overflow-hidden shadow-xl">
-
-                    {/* Preview Sandbox */}
-                    <div className="flex-1 bg-[#0f0f0f] rounded overflow-hidden relative border border-gray-800 flex flex-col">
-                        {/* Browser chrome bar */}
-                        <div className="h-8 bg-[#1a1a1a] border-b border-gray-800 flex items-center px-3 space-x-2 shrink-0">
-                            <div className="w-3 h-3 rounded-full bg-red-500" />
-                            <div className="w-3 h-3 rounded-full bg-amber-500" />
-                            <div className="w-3 h-3 rounded-full bg-green-500" />
-                            <div className="ml-4 text-xs font-mono text-gray-400 flex items-center flex-1 gap-2">
-                                <span>localhost:3000</span>
-                                {buildStatus === 'PASS' && (
-                                    <span className="inline-flex items-center gap-1 text-green-400 text-[10px] bg-green-900/40 border border-green-800 px-1.5 py-0.5 rounded">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                                        LIVE
-                                    </span>
-                                )}
-                                {buildStatus === 'FAIL' && (
-                                    <span className="inline-flex items-center gap-1 text-red-400 text-[10px] bg-red-900/40 border border-red-800 px-1.5 py-0.5 rounded">
-                                        BUILD FAILED
-                                    </span>
-                                )}
+                    <div className="flex-1 overflow-y-auto p-2">
+                        {activeFiles.length === 0 ? (
+                            <div className="h-full flex flex-col items-center justify-center opacity-20 text-center p-4">
+                                <Code2 className="w-8 h-8 mb-2" />
+                                <p className="text-[10px] uppercase">No files generated</p>
                             </div>
-                            <button
-                                onClick={handleRefresh}
-                                disabled={!currentFile}
-                                className="text-gray-400 hover:text-[#00f5ff] transition-colors disabled:opacity-30 disabled:cursor-not-allowed p-1 rounded hover:bg-white/5"
-                                title="Refresh preview"
-                            >
-                                <RefreshCw size={14} />
-                            </button>
-                            <button
-                                onClick={openInNewTab}
-                                disabled={!currentFile}
-                                className="text-gray-400 hover:text-[#00f5ff] transition-colors disabled:opacity-30 disabled:cursor-not-allowed p-1 rounded hover:bg-white/5"
-                                title="Open preview in new tab"
-                            >
-                                <ExternalLink size={14} />
-                            </button>
-                        </div>
+                        ) : (
+                            <div className="space-y-0.5">
+                                {activeFiles.map((file, idx) => (
+                                    <button
+                                        key={file.name}
+                                        onClick={() => setActiveFileIndex(idx)}
+                                        className={`w-full text-left px-3 py-1.5 rounded-md text-xs font-mono truncate transition-all flex items-center gap-2 ${activeFileIndex === idx
+                                            ? 'bg-[#00f5ff]/10 text-[#00f5ff] border border-[#00f5ff]/20'
+                                            : 'text-white/40 hover:bg-white/5 hover:text-white/70'
+                                            }`}
+                                    >
+                                        <FileCode className="w-3.5 h-3.5 shrink-0" />
+                                        {file.name}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </aside>
 
-                        {/* Preview Content */}
-                        <div className="flex-1 relative flex flex-col overflow-hidden">
-                            {isPreviewable ? (
-                                <div className="flex-1 relative">
-                                    <iframe
-                                        key={currentFile!.name + Object.keys(files).length + refreshKey}
-                                        title="Live Preview"
-                                        srcDoc={buildPreviewHtml(currentFile!.content, files)}
-                                        className="w-full h-full border-none"
-                                        sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
-                                    />
-                                    {/* Overlay error strip at the bottom when build fails */}
-                                    {buildStatus === 'FAIL' && buildErrors.length > 0 && (
-                                        <div className="absolute bottom-0 left-0 right-0 max-h-36 overflow-auto border-t border-red-900/60 bg-red-950/95 backdrop-blur-sm p-3">
-                                            <h4 className="font-bold text-xs mb-1.5 font-mono text-red-400 flex items-center gap-1.5">
-                                                <TerminalSquare className="w-3 h-3" /> BUILD ERRORS
-                                            </h4>
-                                            <ul className="text-xs list-disc pl-4 font-mono space-y-0.5 text-red-300">
-                                                {buildErrors.map((err, i) => <li key={i}>{err}</li>)}
-                                            </ul>
+                {/* ── Column 2: Stage (Toggleable) ── */}
+                <main className="col-span-6 flex flex-col gap-4 overflow-hidden">
+                    <div className="flex bg-[#0d0d12] rounded-xl border border-white/[0.08] p-1 w-fit shrink-0">
+                        <button
+                            onClick={() => setViewMode('preview')}
+                            className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${viewMode === 'preview'
+                                ? 'bg-[#00f5ff] text-[#0a0a0a]'
+                                : 'text-white/40 hover:bg-white/5'
+                                }`}
+                        >
+                            <Monitor className="w-4 h-4" />
+                            Preview
+                        </button>
+                        <button
+                            onClick={() => setViewMode('code')}
+                            className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${viewMode === 'code'
+                                ? 'bg-[#00f5ff] text-[#0a0a0a]'
+                                : 'text-white/40 hover:bg-white/5'
+                                }`}
+                        >
+                            <Code2 className="w-4 h-4" />
+                            Code
+                        </button>
+                    </div>
+
+                    <div className="flex-1 bg-[#1a1a1a] rounded-xl overflow-hidden border border-gray-800 shadow-2xl relative flex flex-col">
+                        {viewMode === 'code' ? (
+                            <>
+                                <div className="h-10 bg-[#12121a] border-b border-gray-800 px-4 flex items-center justify-between shrink-0">
+                                    <div className="flex items-center gap-2">
+                                        <FileCode className="w-4 h-4 text-[#00f5ff]" />
+                                        <span className="text-xs font-mono text-gray-300">
+                                            {currentFile ? currentFile.name : 'No file selected'}
+                                        </span>
+                                    </div>
+                                    {currentFile && (
+                                        <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded text-white/30 font-mono">
+                                            {currentFile.content.split('\n').length} lines
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="flex-1 overflow-auto bg-[#0a0a0a] relative">
+                                    {currentFile ? (
+                                        <pre className={`p-6 text-[11px] leading-relaxed text-gray-300 whitespace-pre ${jetBrainsMono.className}`}>
+                                            {currentFile.content}
+                                        </pre>
+                                    ) : (
+                                        <div className="absolute inset-0 flex flex-col items-center justify-center opacity-30 text-center">
+                                            <Code2 className="w-16 h-16 mb-4" />
+                                            <p className={`text-xl ${spaceGrotesk.className}`}>AWAITING CODE INFUSION</p>
                                         </div>
                                     )}
                                 </div>
-                            ) : currentFile ? (
-                                /* Non-previewable file: show raw code */
-                                <div className="flex-1 overflow-auto p-4 bg-[#0a0a0a] font-mono text-xs text-gray-300">
-                                    <pre className="whitespace-pre-wrap leading-relaxed">{currentFile.content}</pre>
+                            </>
+                        ) : (
+                            <>
+                                <div className="h-10 bg-[#12121a] border-b border-gray-800 flex items-center px-4 space-x-3 shrink-0">
+                                    <div className="flex gap-1.5">
+                                        <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
+                                        <div className="w-2.5 h-2.5 rounded-full bg-amber-500/60" />
+                                        <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
+                                    </div>
+                                    <div className="flex-1 ml-4 bg-[#0a0a0a] border border-white/[0.05] rounded px-3 py-1 flex items-center gap-2">
+                                        <Globe className="w-3 h-3 text-white/20" />
+                                        <span className="text-[10px] font-mono text-white/40 truncate">
+                                            app://generated-app/{currentFile?.name || ''}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                        <button onClick={handleRefresh} disabled={!currentFile} className="p-1.5 text-white/40 hover:text-[#00f5ff] hover:bg-white/5 rounded transition-all disabled:opacity-20"><RefreshCw className="w-3.5 h-3.5" /></button>
+                                        <button onClick={openInNewTab} disabled={!currentFile} className="p-1.5 text-white/40 hover:text-[#00f5ff] hover:bg-white/5 rounded transition-all disabled:opacity-20"><ExternalLink className="w-3.5 h-3.5" /></button>
+                                    </div>
                                 </div>
-                            ) : (
-                                /* No file selected yet */
-                                <div className="flex-1 flex flex-col items-center justify-center text-gray-600 select-none">
-                                    <Activity className="w-10 h-10 mb-3 opacity-40 animate-pulse" />
-                                    <p className="font-mono text-xs uppercase tracking-widest opacity-60">
-                                        {activeFiles.length === 0 ? 'AWAITING CODE GENERATION...' : 'SELECT A FILE TO PREVIEW'}
-                                    </p>
+                                <div className="flex-1 bg-white relative">
+                                    {isPreviewable ? (
+                                        <iframe
+                                            key={`${currentFile!.name}-${Object.keys(files).length}-${refreshKey}`}
+                                            title="Live Preview"
+                                            srcDoc={buildPreviewHtml(currentFile!.content, files)}
+                                            className="w-full h-full border-none"
+                                            sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
+                                        />
+                                    ) : (
+                                        <div className="h-full flex flex-col items-center justify-center text-gray-400 bg-[#0a0a0a] text-center p-8">
+                                            <Activity className="w-12 h-12 mb-4 opacity-20 animate-pulse" />
+                                            <p className="text-sm font-mono opacity-60 uppercase tracking-widest">
+                                                {activeFiles.length === 0 ? 'AWAITING GENERATION...' : 'SELECT PREVIEWABLE FILE'}
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
+                            </>
+                        )}
+                    </div>
+                </main>
+
+                {/* ── Column 3: Feed & Neural Controls ── */}
+                <aside className="col-span-4 flex flex-col gap-4 overflow-hidden">
+                    <div className="flex-1 bg-[#0d0d12] rounded-xl border border-white/[0.08] flex flex-col overflow-hidden shadow-lg">
+                        <div className="h-10 bg-[#12121a] border-b border-white/[0.08] flex items-center justify-between px-4 shrink-0">
+                            <div className="flex items-center gap-2">
+                                <TerminalSquare className="w-4 h-4 text-[#00f5ff]" />
+                                <span className="text-[11px] font-bold uppercase tracking-widest text-white/40">Neural Feed</span>
+                            </div>
+                            {isRunning && (
+                                <span className="flex items-center gap-1.5 text-[10px] text-amber-500 font-bold animate-pulse">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                    ACTIVE
+                                </span>
                             )}
                         </div>
-                    </div>
-
-                    {/* Terminal Feed */}
-                    <div className="h-[35%] bg-[#0a0a0a] rounded border border-gray-800 flex flex-col shadow-inner">
-                        <div className="h-8 bg-[#1a1a1a] px-3 flex items-center justify-between border-b border-gray-800 shrink-0">
-                            <div className="flex items-center text-xs font-mono text-[#00f5ff]">
-                                <TerminalSquare className="w-4 h-4 mr-2" />
-                                Antigravity Stream
-                            </div>
-                        </div>
-                        <div className="flex-1 overflow-auto p-3 text-xs font-mono leading-relaxed space-y-1" ref={terminalRef}>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3 font-mono text-[11px]" ref={terminalRef}>
                             {events.map((ev, i) => (
-                                <div key={i} className="flex">
-                                    <span className="text-[#00f5ff] mr-2 w-16 opacity-50 shrink-0">
-                                        {new Date().toISOString().substring(11, 19)}
-                                    </span>
-                                    <div className="flex-1">
-                                        {ev.type === 'log' && <span className="text-gray-300">{ev.message}</span>}
-                                        {ev.type === 'thinking' && <span className="text-green-400 italic">{'<Thinking> ' + ev.process + ' </Thinking>'}</span>}
-                                        {ev.type === 'file_commit' && <span className="text-[#00f5ff]">→ Committed: {ev.fileName}</span>}
-                                        {ev.type === 'build_status' && (
-                                            <span className={ev.status === 'PASS' ? 'text-green-400 font-bold' : 'text-red-500 font-bold'}>
-                                                [EVALUATOR {ev.status}] {ev.errors?.length ? `Found ${ev.errors.length} errors.` : ''}
-                                            </span>
-                                        )}
-                                        {ev.type === 'debugger_patch' && (
-                                            <div className="text-amber-400 mt-1 pb-1">
-                                                <strong className="block mb-1">Applying Patch Constraints:</strong>
-                                                <span className="block border-l-2 border-amber-500 pl-2 opacity-80">{ev.rationale}</span>
-                                            </div>
-                                        )}
+                                <div key={i} className="flex gap-3">
+                                    <span className="text-white/10 shrink-0 w-14 text-right">{String(i).padStart(3, '0')}</span>
+                                    <div className="flex-1 text-white/60">
+                                        {ev.type === 'log' && <span>{ev.message}</span>}
+                                        {ev.type === 'thinking' && <span className="text-emerald-500/70 italic">◈ {ev.process}</span>}
+                                        {ev.type === 'file_commit' && <span className="text-[#00f5ff]">→ Commit <span className="text-white font-bold">{ev.fileName}</span></span>}
                                         {ev.type === 'node_change' && (
-                                            <div className="my-2 border-b border-gray-800 pb-1 w-full text-indigo-400 font-bold tracking-wider">
-                                                <span className="uppercase text-[10px] bg-indigo-900/60 text-indigo-200 px-2 py-0.5 rounded mr-2">STATE TRANSFER</span>
-                                                Activating {ev.node}
+                                            <div className="text-indigo-400 font-bold py-1 border-y border-white/5 my-1">
+                                                <span className="text-[9px] bg-indigo-500/20 px-1.5 py-0.5 rounded mr-2 uppercase">Node</span>
+                                                {ev.node}
                                             </div>
                                         )}
-                                        {ev.type === 'alert' && (
-                                            <div className="text-red-500 font-bold bg-red-900/20 px-2 py-1 rounded inline-block my-1 border border-red-900">
-                                                {ev.message}
-                                            </div>
-                                        )}
-                                        {ev.type === 'terminal_cmd' && (
-                                            <div className="text-emerald-400 font-mono bg-emerald-900/20 px-2 py-1 rounded my-1 border border-emerald-900/50">
-                                                <span className="text-emerald-500 mr-1">$</span> {ev.command}
-                                            </div>
-                                        )}
-                                        {ev.type === 'terminal_output' && (
-                                            <div className={`font-mono text-[11px] px-2 py-1 rounded my-1 whitespace-pre-wrap max-h-32 overflow-auto ${ev.exit_code === 0 ? 'text-gray-400 bg-gray-900/40 border border-gray-800' : 'text-red-400 bg-red-900/20 border border-red-900/50'}`}>
-                                                {ev.output}
-                                            </div>
-                                        )}
+                                        {ev.type === 'alert' && <div className="text-red-400 font-bold bg-red-500/10 p-2 rounded border border-red-500/20">{ev.message}</div>}
                                     </div>
                                 </div>
                             ))}
-                            {events.length === 0 && (
-                                <div className="text-gray-600 italic">The system is dormant. Launch to begin.</div>
-                            )}
                         </div>
                     </div>
-                </div>
+
+                    {/* AI Channel (Chat) */}
+                    <div className="h-44 bg-[#121216] rounded-xl border border-[#00f5ff]/20 flex flex-col overflow-hidden p-4">
+                        <div className="flex items-center gap-2 mb-2 text-[#00f5ff]">
+                            <Sparkles className="w-4 h-4" />
+                            <span className="text-[10px] font-bold uppercase tracking-widest">Aigent Signal</span>
+                        </div>
+                        <form onSubmit={handleChatSubmit} className="flex-1 flex flex-col gap-3">
+                            <textarea
+                                value={chatInput}
+                                onChange={(e) => setChatInput(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChatSubmit(e); } }}
+                                placeholder="Refine design, fix logic..."
+                                className="flex-1 bg-white/5 border border-white/10 rounded-lg p-3 text-xs focus:ring-1 focus:ring-[#00f5ff] outline-none resize-none placeholder:text-white/20 text-white/80"
+                            />
+                            <button
+                                type="submit"
+                                disabled={isRunning || !chatInput.trim()}
+                                className="bg-[#00f5ff] text-[#0a0a0a] px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-[#00d0d8] transition-all disabled:opacity-50"
+                            >
+                                SEND SIGNAL
+                            </button>
+                        </form>
+                    </div>
+                </aside>
             </div>
         </div>
     );

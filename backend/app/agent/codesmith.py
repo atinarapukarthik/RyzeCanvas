@@ -109,6 +109,7 @@ def normalize_file_path(path: str) -> Optional[str]:
       components/hero.tsx → should be src/components/ui/hero.tsx
       lib/helpers.ts      → should be src/lib/helpers.ts
 
+    It also fixes issues where the LLM repeats 'src/' (e.g. src/src/app/page.tsx).
     Returns None if the file should be skipped (e.g. Librarian-owned files).
     """
     # Clean up the path
@@ -117,28 +118,33 @@ def normalize_file_path(path: str) -> Optional[str]:
     # Remove leading ./ or /
     path = path.lstrip("./")
 
-    # Skip Librarian-owned files (config files, globals.css, layout.tsx, utils.ts)
-    if path in LIBRARIAN_OWNED_FILES:
-        return None
+    # Keep removing leading "src/" until it's completely stripped
+    has_src_prefix = False
+    while path.startswith("src/"):
+        has_src_prefix = True
+        path = path[4:]
 
-    # Also check without src/ prefix
-    path_without_src = path[4:] if path.startswith("src/") else path
-    for owned in LIBRARIAN_OWNED_FILES:
-        owned_without_src = owned[4:] if owned.startswith("src/") else owned
-        if path_without_src == owned_without_src:
-            return None
+    # Skip Librarian-owned files (config files, globals.css, layout.tsx, utils.ts)
+    owned_stripped = [
+        p[4:] if p.startswith("src/") else p
+        for p in LIBRARIAN_OWNED_FILES
+    ]
+    if path in owned_stripped:
+        return None
 
     # Source code directories that must live under src/
     source_dirs = ["app/", "components/", "lib/", "hooks/", "types/", "styles/",
                    "utils/", "services/", "context/", "providers/", "store/",
-                   "features/", "modules/", "pages/"]
+                   "features/", "modules/", "pages/", "assets/"]
 
-    # If path starts with a source directory but NOT src/, add the src/ prefix
-    if not path.startswith("src/"):
-        for src_dir in source_dirs:
-            if path.startswith(src_dir):
-                path = "src/" + path
-                break
+    needs_src = False
+    for src_dir in source_dirs:
+        if path.startswith(src_dir):
+            needs_src = True
+            break
+
+    if needs_src or has_src_prefix:
+        return "src/" + path
 
     # Root-level non-config files (like public/ assets) are fine as-is
     return path
