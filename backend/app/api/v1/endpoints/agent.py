@@ -199,7 +199,7 @@ async def save_plan(
             # Fetch project with ownership check
             result = await db.execute(
                 select(Project).where(
-                    Project.id == request.project_id,
+                    Project.id == str(request.project_id),
                     Project.user_id == current_user.id
                 )
             )

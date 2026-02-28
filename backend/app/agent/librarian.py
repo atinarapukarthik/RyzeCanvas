@@ -298,11 +298,12 @@ class LibrarianAgent:
         self.workspace_root = workspace_root
         self.created_dirs: List[str] = []
         self.created_files: List[str] = []
+        self.generated_content: Dict[str, str] = {}  # {filepath: content}
 
     def generate_scaffolding(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
         """
         Master method: Creates the entire project skeleton from the manifest.
-        Returns a report of everything that was created.
+        Returns a report of everything that was created, including file content dict.
         """
         self._create_directory_tree(manifest)
         self._generate_config_files(manifest)
@@ -312,7 +313,12 @@ class LibrarianAgent:
             "created_dirs": self.created_dirs,
             "created_files": self.created_files,
             "workspace": self.workspace_root,
+            "files_content": self.generated_content,  # Dict of all generated files
         }
+
+    def get_all_files(self) -> Dict[str, str]:
+        """Returns the dict of all generated files {path: content}."""
+        return self.generated_content
 
     def _create_directory_tree(self, manifest: Dict[str, Any]):
         """Create all directories: standard folders + manifest-declared file paths."""
@@ -357,10 +363,16 @@ class LibrarianAgent:
         }
 
         for filename, content in config_files.items():
-            file_path = os.path.join(self.workspace_root, filename)
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            self.created_files.append(filename)
+            # Store in memory (primary)
+            norm_name = filename.replace("\\", "/")
+            self.generated_content[norm_name] = content
+            self.created_files.append(norm_name)
+            # Also write to temp workspace for npm/build
+            if self.workspace_root:
+                file_path = os.path.join(self.workspace_root, filename)
+                os.makedirs(os.path.dirname(file_path), exist_ok=True) if os.path.dirname(file_path) else None
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(content)
 
     def _generate_boilerplate_files(self, manifest: Dict[str, Any]):
         """Generate boilerplate source files that form the project's foundation."""
@@ -371,11 +383,16 @@ class LibrarianAgent:
         }
 
         for filepath, content in boilerplate_files.items():
-            full_path = os.path.join(self.workspace_root, filepath)
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            with open(full_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            self.created_files.append(filepath)
+            # Store in memory (primary)
+            norm_path = filepath.replace("\\", "/")
+            self.generated_content[norm_path] = content
+            self.created_files.append(norm_path)
+            # Also write to temp workspace for npm/build
+            if self.workspace_root:
+                full_path = os.path.join(self.workspace_root, filepath)
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                with open(full_path, "w", encoding="utf-8") as f:
+                    f.write(content)
 
     def validate_path(self, file_path: str) -> str:
         """

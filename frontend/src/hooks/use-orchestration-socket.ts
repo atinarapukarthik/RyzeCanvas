@@ -43,14 +43,28 @@ export function useOrchestrationSocket(projectId: string) {
                         // Try parsing as JSON (multi-file format)
                         const parsedFiles = JSON.parse(project.code);
                         if (typeof parsedFiles === 'object' && parsedFiles !== null) {
-                            setFiles(parsedFiles);
+                            // Normalize backslash paths from Windows and filter empty/placeholder entries
+                            const normalized: Record<string, string> = {};
+                            for (const [key, value] of Object.entries(parsedFiles)) {
+                                const cleanKey = key.replace(/\\\\/g, '/');
+                                const strValue = String(value);
+                                if (strValue && strValue.trim() !== '// Generated code') {
+                                    normalized[cleanKey] = strValue;
+                                }
+                            }
+                            if (Object.keys(normalized).length > 0) {
+                                setFiles(normalized);
+                                console.log(`[Orchestration] Loaded ${Object.keys(normalized).length} files from DB`);
+                            }
                         } else {
                             // Single file fallback
                             setFiles({ 'page.tsx': project.code });
                         }
                     } catch (e) {
                         // Non-JSON fallback (legacy format)
-                        setFiles({ 'page.tsx': project.code });
+                        if (project.code.trim() !== '// Generated code') {
+                            setFiles({ 'page.tsx': project.code });
+                        }
                     }
                 }
             } catch (err) {
@@ -118,14 +132,24 @@ export function useOrchestrationSocket(projectId: string) {
         };
 
         return () => {
-            ws.close();
+            if (ws.readyState === WebSocket.CONNECTING) {
+                ws.onopen = () => ws.close();
+            } else {
+                ws.close();
+            }
         };
     }, [projectId]);
 
     const startOrchestration = useCallback((promptText?: string) => {
         // Reset state BEFORE sending the request to avoid race conditions
         setEvents([]);
-        setFiles({});
+
+        // Only wipe files if THIS IS A NEW START (no files yet)
+        // If we already have files, stay incremental.
+        if (Object.keys(files).length === 0) {
+            setFiles({});
+        }
+
         setBuildStatus('running');
         setBuildErrors([]);
         setHealingPulse(false);
@@ -151,7 +175,8 @@ export function useOrchestrationSocket(projectId: string) {
                 setBuildStatus('idle');
             });
         }
-    }, [projectId]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectId, files]);
 
     return {
         events,

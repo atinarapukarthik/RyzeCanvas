@@ -1,0 +1,215 @@
+// src/pages/_app.tsx
+import type { AppProps } from 'next/app';
+import '../styles/globals.css';
+
+export default function MyApp({ Component, pageProps }: AppProps) {
+  return <Component {...pageProps} />;
+}
+
+// src/pages/index.tsx
+import type { NextPage } from 'next';
+import Layout from '@/components/Layout';
+import StatCard from '@/components/StatCard';
+import { useState, useEffect } from 'react';
+
+type DashboardData = {
+  users: number;
+  sales: number;
+  performance: number;
+  revenue: number;
+};
+
+const Dashboard: NextPage = () => {
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Simulate data fetching
+  useEffect(() => {
+    const fetchData = async () => {
+      // Replace with real API call
+      const mockData: DashboardData = {
+        users: 1240,
+        sales: 342,
+        performance: 87,
+        revenue: 12456,
+      };
+      await new Promise((res) => setTimeout(res, 1000));
+      setData(mockData);
+      setLoading(false);
+    };
+    fetchData();
+  }, []);
+
+  return (
+    <Layout>
+      <h1 className="text-2xl font-semibold mb-6">Dashboard</h1>
+      {loading ? (
+        <p className="text-gray-600">Loading...</p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <StatCard title="Users" value={data?.users ?? 0} icon="👥" />
+          <StatCard title="Sales" value={data?.sales ?? 0} icon="💰" />
+          <StatCard title="Performance" value={`${data?.performance ?? 0}%`} icon="🚀" />
+          <StatCard title="Revenue" value={`$${data?.revenue ?? 0}`} icon="📈" />
+        </div>
+      )}
+    </Layout>
+  );
+};
+
+export default Dashboard;
+
+// src/components/Layout.tsx
+import type { ReactNode } from 'react';
+import Sidebar from '@/components/Sidebar';
+import Header from '@/components/Header';
+
+type LayoutProps = {
+  children: ReactNode;
+};
+
+export default function Layout({ children }: LayoutProps) {
+  return (
+    <div className="flex min-h-screen bg-gray-100">
+      <Sidebar />
+      <div className="flex-1 flex flex-col">
+        <Header />
+        <main className="flex-1 p-6 overflow-auto">{children}</main>
+      </div>
+    </div>
+  );
+}
+
+// src/components/Sidebar.tsx
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+import { HomeIcon, ChartBarIcon, CogIcon } from '@heroicons/react/24/outline';
+
+type NavItem = {
+  name: string;
+  href: string;
+  icon: (props: any) => JSX.Element;
+};
+
+const navItems: NavItem[] = [
+  { name: 'Dashboard', href: '/', icon: HomeIcon },
+  { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
+  { name: 'Settings', href: '/settings', icon: CogIcon },
+];
+
+export default function Sidebar() {
+  const { pathname } = useRouter();
+
+  return (
+    <aside className="w-64 bg-white shadow-md hidden md:block">
+      <div className="p-4 text-xl font-bold">MyApp</div>
+      <nav className="mt-4">
+        {navItems.map((item) => {
+          const isActive = pathname === item.href;
+          return (
+            <Link key={item.name} href={item.href}>
+              <a
+                className={`flex items-center px-4 py-2 mx-2 rounded ${
+                  isActive ? 'bg-indigo-100 text-indigo-600' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <item.icon className="h-5 w-5 mr-3" />
+                {item.name}
+              </a>
+            </Link>
+          );
+        })}
+      </nav>
+    </aside>
+  );
+}
+
+// src/components/Header.tsx
+import { BellIcon, UserCircleIcon } from '@heroicons/react/24/outline';
+
+export default function Header() {
+  return (
+    <header className="flex items-center justify-between bg-white shadow px-6 py-4">
+      <h2 className="text-lg font-medium">Welcome back!</h2>
+      <div className="flex items-center space-x-4">
+        <button className="relative text-gray-600 hover:text-gray-800">
+          <BellIcon className="h-6 w-6" />
+          <span className="absolute -top-1 -right-1 bg-red-500 text-xs text-white rounded-full px-1">
+            3
+          </span>
+        </button>
+        <UserCircleIcon className="h-8 w-8 text-gray-600" />
+      </div>
+    </header>
+  );
+}
+
+// src/components/StatCard.tsx
+type StatCardProps = {
+  title: string;
+  value: string | number;
+  icon: string; // emoji or any string representation
+};
+
+export default function StatCard({ title, value, icon }: StatCardProps) {
+  return (
+    <div className="bg-white rounded-lg shadow p-5 flex items-center">
+      <div className="text-3xl mr-4">{icon}</div>
+      <div>
+        <p className="text-sm text-gray-500">{title}</p>
+        <p className="text-2xl font-semibold">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+// src/styles/globals.css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom global styles can be added here */
+
+// tailwind.config.js
+module.exports = {
+  content: [
+    './src/**/*.{js,ts,jsx,tsx}',
+    './pages/**/*.{js,ts,jsx,tsx}',
+    './components/**/*.{js,ts,jsx,tsx}',
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+};
+
+// tsconfig.json
+{
+  "compilerOptions": {
+    "target": "es5",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}
+
+// next-env.d.ts
+/// <reference types="next" />
+/// <reference types="next/types/global" />
+/// <reference types="next/image-types/global" />

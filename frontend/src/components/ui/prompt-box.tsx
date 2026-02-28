@@ -199,7 +199,12 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
     const fileInputRef = React.useRef<HTMLInputElement>(null);
     const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
     const audioChunksRef = React.useRef<Blob[]>([]);
-    const [value, setValue] = React.useState("");
+    const [value, setValue] = React.useState(props.value as string || "");
+    React.useEffect(() => {
+      if (props.value !== undefined) {
+        setValue(props.value as string);
+      }
+    }, [props.value]);
     const [imagePreview, setImagePreview] = React.useState<string | null>(null);
     const [webSearchActive, setWebSearchActive] = React.useState(false);
     const [chatModeActive, setChatModeActive] = React.useState(false);

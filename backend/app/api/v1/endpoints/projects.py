@@ -175,7 +175,7 @@ async def get_project(
         result = await db.execute(
             select(Project).where(
                 and_(
-                    Project.id == project_id,
+                    Project.id == str(project_id),
                     Project.user_id == current_user.id
                 )
             )
@@ -216,7 +216,7 @@ async def update_project(
         result = await db.execute(
             select(Project).where(
                 and_(
-                    Project.id == project_id,
+                    Project.id == str(project_id),
                     Project.user_id == current_user.id
                 )
             )
@@ -279,7 +279,7 @@ async def delete_project(
         result = await db.execute(
             select(Project).where(
                 and_(
-                    Project.id == project_id,
+                    Project.id == str(project_id),
                     Project.user_id == current_user.id
                 )
             )

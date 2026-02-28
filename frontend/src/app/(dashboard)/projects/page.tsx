@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 
 export default function ProjectsRootPage() {
-    // Redirect to the default mock project for immediate demo access
-    redirect('/projects/proj-demo-123');
+    // Redirect to the dashboard where real projects are listed
+    redirect('/dashboard');
 }

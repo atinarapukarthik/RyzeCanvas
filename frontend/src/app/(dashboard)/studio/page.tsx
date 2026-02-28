@@ -120,36 +120,38 @@ export function buildPreviewHtml(
     themeColors?: PreviewThemeColors
 ): string {
     // ── Multi-file Detection & Parsing ──
-    let files = allFiles || {};
+    let files = allFiles ? { ...allFiles } : {};
 
-    // If no structured files are provided but the code looks like a multi-file dump (comments like // filename)
-    // parse it into individual files.
-    if (Object.keys(files).length === 0 && (code.match(/(?:^|\n)\/\/\s+[\w\-\/]+\.(?:tsx|ts|jsx|js|css|json)/) || code.includes('// tsconfig.json'))) {
-        const parsedFiles: Record<string, string> = {};
-        const lines = code.split('\n');
-        let currentFile = '';
-        let currentContent: string[] = [];
+    // If no structured files are provided, start by adding 'code' to parse
+    if (Object.keys(files).length === 0 && code.trim()) {
+        files['__generated_dump__'] = code;
+    }
 
-        for (const line of lines) {
-            const match = line.match(/^(?:\/\/|###)\s+([a-zA-Z0-9_\-\/]+\.(?:tsx|ts|jsx|js|css|json|html|md))$/);
-            if (match) {
-                if (currentFile) {
-                    parsedFiles[currentFile] = currentContent.join('\n').trim();
-                }
-                currentFile = match[1].trim();
-                currentContent = [];
-            } else {
-                if (currentFile || line.trim()) { // Skip leading garbage
-                    currentContent.push(line);
+    // Parse any file that contains a multi-file dump (e.g. LLM outputting multiple files inside one field)
+    for (const [key, val] of Object.entries(files)) {
+        if (typeof val === 'string' && (val.match(/(?:^|\n)\/\/\s+[\w\-\/]+\.(?:tsx|ts|jsx|js|css|json)/) || val.includes('// tsconfig.json'))) {
+            delete files[key]; // Remove the unparsed blob
+            const lines = val.split('\n');
+            let currentFile = '';
+            let currentContent: string[] = [];
+
+            for (const line of lines) {
+                const match = line.match(/^(?:\/\/|###)\s+((?:src\/|app\/|pages\/|components\/|lib\/|styles\/)?[\w\-\/]+\.(?:tsx|ts|jsx|js|css|json|html|md))$/);
+                if (match) {
+                    if (currentFile) {
+                        files[currentFile] = currentContent.join('\n').trim();
+                    }
+                    currentFile = match[1].trim();
+                    currentContent = [];
+                } else {
+                    if (currentFile || line.trim()) {
+                        currentContent.push(line);
+                    }
                 }
             }
-        }
-        if (currentFile) {
-            parsedFiles[currentFile] = currentContent.join('\n').trim();
-        }
-
-        if (Object.keys(parsedFiles).length > 0) {
-            files = parsedFiles;
+            if (currentFile) {
+                files[currentFile] = currentContent.join('\n').trim();
+            }
         }
     }
 

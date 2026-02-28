@@ -35,6 +35,7 @@ export default function DashboardPage() {
   const setDesignTheme = useUIStore((s) => s.setDesignTheme);
   const [currentMode, setCurrentMode] = useState<"plan" | "build">("build");
   const [webSearchActive, setWebSearchActive] = useState(false);
+  const [promptText, setPromptText] = useState("");
   const queryClient = useQueryClient();
 
   const { data: projects, isLoading, error, refetch } = useQuery({
@@ -147,7 +148,13 @@ export default function DashboardPage() {
             transition={{ delay: 0.3, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
             className="w-full max-w-2xl mb-6"
           >
-            <PromptBox onSend={handleSend} onModeChange={setCurrentMode} onWebSearchChange={setWebSearchActive} />
+            <PromptBox
+              value={promptText}
+              onChange={(e) => setPromptText(e.target.value)}
+              onSend={handleSend}
+              onModeChange={setCurrentMode}
+              onWebSearchChange={setWebSearchActive}
+            />
           </motion.div>
 
           {/* Quick Suggestion Chips */}
@@ -172,7 +179,7 @@ export default function DashboardPage() {
             ].map((suggestion) => (
               <button
                 key={suggestion.label}
-                onClick={() => handleSend(`Build a ${suggestion.label.toLowerCase()}`, currentMode)}
+                onClick={() => setPromptText(`Build a ${suggestion.label.toLowerCase()}`)}
                 className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/[0.03] border border-white/[0.08] text-white/50 text-sm hover:bg-white/[0.08] hover:text-white hover:border-white/20 transition-all duration-300 backdrop-blur-xl shadow-lg"
               >
                 <suggestion.icon className="h-3.5 w-3.5" />

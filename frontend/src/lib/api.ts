@@ -133,7 +133,18 @@ async function handleResponse<T>(response: Response): Promise<T> {
   }
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || `API Error: ${response.statusText}`);
+    // FastAPI 422 errors return detail as an array of objects
+    let message = `API Error: ${response.statusText}`;
+    if (errorData.detail) {
+      if (typeof errorData.detail === 'string') {
+        message = errorData.detail;
+      } else if (Array.isArray(errorData.detail)) {
+        message = errorData.detail.map((e: { msg?: string; loc?: string[] }) =>
+          e.msg || JSON.stringify(e)
+        ).join('; ');
+      }
+    }
+    throw new Error(message);
   }
   return response.json();
 }

@@ -152,43 +152,79 @@ def normalize_file_path(path: str) -> Optional[str]:
 
 class CodeSmithHandler:
     """
-    Parses and commits the generated code files directly into the workspace.
-    Includes path normalization to prevent structural mismatches with the Librarian.
+    Parses the generated code files from the CodeSmith agent output.
+    Returns parsed file content as a dict — NO local disk writes.
+    All persistence is handled by the orchestration layer via DB.
     """
-    def __init__(self, workspace_root: str):
-        self.root = workspace_root
+    def __init__(self, workspace_root: str = ""):
+        self.root = workspace_root  # kept for backward compat but not used for writes
 
     def commit_files(self, agent_output: str) -> List[str]:
         """
-        Parses the CodeSmith's response and writes files to the local disk.
-        Normalizes all paths to ensure they land inside the Librarian's src/ structure.
+        Parses the CodeSmith's response and returns file paths.
+        Also stores parsed content in self.last_committed for the orchestration to read.
+        """
+        result = self.parse_files(agent_output)
+        self.last_committed = result  # dict {path: content}
+        return list(result.keys())
+
+    def parse_files(self, agent_output: str) -> Dict[str, str]:
+        """
+        Parses the CodeSmith's response and returns a dict of {path: content}.
+        Normalizes all paths to ensure they use the Librarian's src/ structure.
         Skips any Librarian-owned files the LLM tried to regenerate.
         """
-        # Look for code blocks matching: ```tsx file="path/to/file.tsx"
+        # 1. Look for explicit code blocks matching: ```tsx file="path/to/file.tsx"
         file_blocks = re.findall(
             r'```(?:tsx|ts|css|js|jsx|json|md|html)?\s+file="([^"]+)"\n(.*?)\n```',
             agent_output, re.DOTALL
         )
+        
+        raw_files = {path: content for path, content in file_blocks}
+        
+        # 2. Add raw output if no explicit blocks were found but code matches a dump pattern
+        if not raw_files and agent_output.strip() and (re.search(r'(?:^|\n)(?://|###)\s+((?:src/|app/|pages/|components/|lib/|styles/)?[\w\-\/]+\.(?:tsx|ts|jsx|js|css|json|html|md))', agent_output) or '// tsconfig.json' in agent_output):
+            raw_files['__generated_dump__'] = agent_output
 
-        committed_files = []
-        for raw_path, content in file_blocks:
-            # Normalize the path (add src/ prefix, block Librarian-owned files)
+        # 3. Process raw files, extracting nested embedded files (e.g. LLM packs multiple files under one file block)
+        extracted_files = {}
+        for block_path, block_content in raw_files.items():
+            if re.search(r'(?:^|\n)(?://|###)\s+((?:src/|app/|pages/|components/|lib/|styles/)?[\w\-\/]+\.(?:tsx|ts|jsx|js|css|json|html|md))', block_content) or '// tsconfig.json' in block_content:
+                lines = block_content.split('\n')
+                current_file = ''
+                current_content = []
+                for line in lines:
+                    match = re.search(r'^(?://|###)\s+((?:src/|app/|pages/|components/|lib/|styles/)?[\w\-\/]+\.(?:tsx|ts|jsx|js|css|json|html|md))$', line)
+                    if match:
+                        if current_file:
+                            extracted_files[current_file] = '\n'.join(current_content).strip()
+                        current_file = match.group(1).strip()
+                        current_content = []
+                    else:
+                        if current_file or line.strip():
+                            current_content.append(line)
+                if current_file:
+                    extracted_files[current_file] = '\n'.join(current_content).strip()
+            else:
+                extracted_files[block_path] = block_content.strip()
+
+        # 4. Normalize and filter
+        parsed_files = {}
+        for raw_path, content in extracted_files.items():
+            if raw_path == '__generated_dump__':
+                continue
+                
             normalized_path = normalize_file_path(raw_path)
 
             if normalized_path is None:
-                # This is a Librarian-owned file — skip it
                 print(f"[CodeSmith] SKIPPED Librarian-owned file: {raw_path}")
                 continue
 
-            full_path = os.path.join(self.root, normalized_path)
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            normalized_path = normalized_path.replace("\\", "/")
+            parsed_files[normalized_path] = content.strip()
+            print(f"[CodeSmith] Parsed: {raw_path} → {normalized_path}")
 
-            with open(full_path, "w", encoding="utf-8") as f:
-                f.write(content.strip())
-            committed_files.append(normalized_path)
-            print(f"[CodeSmith] Committed: {raw_path} → {normalized_path}")
-
-        return committed_files
+        return parsed_files
 
 
 class CodeSmithAgent:
@@ -258,7 +294,43 @@ class CodeSmithAgent:
             prompt += f"- {f}\n"
 
         if context:
-            prompt += f"\nContext/Design Guidelines:\n{context}\n"
+            try:
+                ctx_dict = json.loads(context)
+                
+                if "original_user_request" in ctx_dict:
+                    prompt = f"Original User Request: {ctx_dict['original_user_request']}\n\n" + prompt
+                    
+                if "instructions" in ctx_dict:
+                    prompt += f"\nCritical Instructions:\n{ctx_dict['instructions']}\n"
+                    
+                if "designSystem" in ctx_dict:
+                    prompt += f"\nDesign System:\n{json.dumps(ctx_dict['designSystem'], indent=2)}\n"
+                    
+                if "existingCodeToModify" in ctx_dict and ctx_dict["existingCodeToModify"]:
+                    prompt += "\n--- EXISTING CODE (You MUST retain existing layout/logic and ONLY apply the requested updates) ---\n"
+                    for fname, code in ctx_dict["existingCodeToModify"].items():
+                        prompt += f"\nFile: {fname}\n```\n{code}\n```\n"
+                    prompt += "\n------------------------------------------------\n"
+                    
+                if "imageAssets" in ctx_dict and ctx_dict["imageAssets"]:
+                    prompt += "\n--- REAL IMAGE URLS (Use these instead of placeholder.svg) ---\n"
+                    for name, url in ctx_dict["imageAssets"].items():
+                        prompt += f"- {name}: {url}\n"
+                    prompt += "Use <img> tags or next/image with these URLs. Do NOT use placeholder.svg when real images are available.\n"
+                    prompt += "---\n"
+                    
+                if "webContext" in ctx_dict and ctx_dict["webContext"]:
+                    prompt += f"\nWeb Research Context:\n{ctx_dict['webContext']}\n"
+                    
+                if "root_cause" in ctx_dict:
+                    prompt += f"\n🛑 DEBUGGER ROOT CAUSE ANALYSIS (Build Failed):\n{ctx_dict['root_cause']}\n"
+                    
+                if "patch" in ctx_dict:
+                    prompt += f"\n🔧 DEBUGGER FIX STRATEGY / PATCH (Apply these changes rigorously to fix the build):\n{ctx_dict['patch']}\n"
+                    prompt += "Ensure you output the full corrected file(s) maintaining the `// src/path/to/file.tsx` format. DO NOT use <QuickEdit> blocks, output the full file.\n"
+                    
+            except Exception:
+                prompt += f"\nContext/Design Guidelines:\n{context}\n"
 
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),

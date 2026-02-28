@@ -20,7 +20,9 @@ import {
     Monitor,
     Globe,
     Sparkles,
-    Loader2
+    Loader2,
+    ChevronRight,
+    Folder
 } from 'lucide-react';
 import { useOrchestrationSocket } from '@/hooks/use-orchestration-socket';
 import { buildPreviewHtml } from '@/lib/preview-builder';
@@ -29,6 +31,115 @@ import { Space_Grotesk, Inter, JetBrains_Mono } from 'next/font/google';
 const spaceGrotesk = Space_Grotesk({ subsets: ['latin'] });
 const inter = Inter({ subsets: ['latin'] });
 const jetBrainsMono = JetBrains_Mono({ subsets: ['latin'] });
+
+// ── File Tree Types & Helpers ──
+interface TreeNode {
+    name: string;
+    fullPath: string;
+    isDir: boolean;
+    children: TreeNode[];
+    fileIndex?: number; // index into the flat activeFiles array
+}
+
+function buildTree(files: { name: string; content: string }[]): TreeNode {
+    const root: TreeNode = { name: 'project', fullPath: '', isDir: true, children: [] };
+
+    files.forEach((file, index) => {
+        const parts = file.name.split('/');
+        let current = root;
+
+        parts.forEach((part, i) => {
+            const isLast = i === parts.length - 1;
+            let child = current.children.find(c => c.name === part);
+            if (!child) {
+                child = {
+                    name: part,
+                    fullPath: parts.slice(0, i + 1).join('/'),
+                    isDir: !isLast,
+                    children: [],
+                    fileIndex: isLast ? index : undefined,
+                };
+                current.children.push(child);
+            }
+            current = child;
+        });
+    });
+
+    // Sort: folders first, then files, alphabetically
+    const sortTree = (node: TreeNode) => {
+        node.children.sort((a, b) => {
+            if (a.isDir && !b.isDir) return -1;
+            if (!a.isDir && b.isDir) return 1;
+            return a.name.localeCompare(b.name);
+        });
+        node.children.forEach(sortTree);
+    };
+    sortTree(root);
+    return root;
+}
+
+function FileTreeNode({ node, activeIndex, onSelect, depth = 0 }: {
+    node: TreeNode;
+    activeIndex: number;
+    onSelect: (idx: number) => void;
+    depth?: number;
+}) {
+    const [expanded, setExpanded] = useState(depth < 3); // auto-expand top-3 levels
+
+    if (node.isDir) {
+        return (
+            <div>
+                <button
+                    onClick={() => setExpanded(!expanded)}
+                    className="w-full text-left flex items-center gap-1 py-1 hover:bg-white/5 rounded transition-all group"
+                    style={{ paddingLeft: `${depth * 12 + 8}px` }}
+                >
+                    <ChevronRight className={`w-3 h-3 text-white/20 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+                    <Folder className={`w-3.5 h-3.5 ${expanded ? 'text-[#00f5ff]/50' : 'text-white/30'}`} />
+                    <span className="text-[10px] font-mono text-white/50 group-hover:text-white/70 truncate">{node.name}</span>
+                </button>
+                {expanded && node.children.map(child => (
+                    <FileTreeNode key={child.fullPath} node={child} activeIndex={activeIndex} onSelect={onSelect} depth={depth + 1} />
+                ))}
+            </div>
+        );
+    }
+
+    const isActive = node.fileIndex === activeIndex;
+    return (
+        <button
+            onClick={() => node.fileIndex !== undefined && onSelect(node.fileIndex)}
+            className={`w-full text-left flex items-center gap-1.5 py-1 rounded transition-all ${isActive
+                ? 'bg-[#00f5ff]/10 text-[#00f5ff]'
+                : 'text-white/40 hover:bg-white/5 hover:text-white/60'
+                }`}
+            style={{ paddingLeft: `${depth * 12 + 20}px` }}
+        >
+            <FileCode className="w-3 h-3 shrink-0" />
+            <span className="text-[10px] font-mono truncate">{node.name}</span>
+        </button>
+    );
+}
+
+function FileTreeView({ files, activeIndex, onSelect }: {
+    files: { name: string; content: string }[];
+    activeIndex: number;
+    onSelect: (idx: number) => void;
+}) {
+    const tree = useMemo(() => buildTree(files), [files]);
+    // If the root has only one child directory (like "src"), skip it
+    const displayNodes = tree.children.length === 1 && tree.children[0].isDir
+        ? [tree.children[0]]
+        : tree.children;
+
+    return (
+        <div className="space-y-0.5">
+            {displayNodes.map(node => (
+                <FileTreeNode key={node.fullPath} node={node} activeIndex={activeIndex} onSelect={onSelect} />
+            ))}
+        </div>
+    );
+}
 
 const NODES = [
     { id: 'Architect', label: 'Architect', icon: BrainCircuit },
@@ -90,12 +201,24 @@ export default function ProjectDashboard() {
         setChatInput('');
     };
 
+    // Auto-start orchestration ONLY on first navigation (not refresh)
+    // We use sessionStorage to track whether this prompt has already triggered.
     useEffect(() => {
-        if (promptParam && !hasStarted && events.length === 0) {
+        if (!promptParam || hasStarted) return;
+        const sessionKey = `orch_started_${projectId}`;
+        if (typeof window !== 'undefined' && sessionStorage.getItem(sessionKey)) {
+            // Already triggered in this browser tab session — skip
+            return;
+        }
+        // Only auto-start if project has NO files (fresh creation)
+        if (Object.keys(files).length === 0 && events.length === 0) {
             setHasStarted(true);
+            if (typeof window !== 'undefined') {
+                sessionStorage.setItem(sessionKey, 'true');
+            }
             startOrchestration(promptParam);
         }
-    }, [promptParam, startOrchestration, hasStarted, events.length]);
+    }, [promptParam, startOrchestration, hasStarted, events.length, files, projectId]);
 
     const activeFiles = useMemo(() => {
         return Object.entries(files).map(([name, content]) => ({ name, content })).sort((a, b) => a.name.localeCompare(b.name));
@@ -235,43 +358,11 @@ export default function ProjectDashboard() {
                 </div>
             </section>
 
-            {/* Main Workspace (3rd Gen Layout) */}
+            {/* Main Workspace (2-Column: Stage + Feed) */}
             <div className="flex-1 grid grid-cols-12 gap-4 overflow-hidden mb-2">
 
-                {/* ── Column 1: Explorer ── */}
-                <aside className="col-span-2 bg-[#0d0d12] rounded-xl border border-white/[0.08] flex flex-col overflow-hidden shadow-lg">
-                    <div className="h-10 bg-[#12121a] border-b border-white/[0.08] flex items-center px-4 gap-2">
-                        <FolderTree className="w-4 h-4 text-[#00f5ff]/60" />
-                        <span className="text-[11px] font-bold uppercase tracking-widest text-white/40">Explorer</span>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-2">
-                        {activeFiles.length === 0 ? (
-                            <div className="h-full flex flex-col items-center justify-center opacity-20 text-center p-4">
-                                <Code2 className="w-8 h-8 mb-2" />
-                                <p className="text-[10px] uppercase">No files generated</p>
-                            </div>
-                        ) : (
-                            <div className="space-y-0.5">
-                                {activeFiles.map((file, idx) => (
-                                    <button
-                                        key={file.name}
-                                        onClick={() => setActiveFileIndex(idx)}
-                                        className={`w-full text-left px-3 py-1.5 rounded-md text-xs font-mono truncate transition-all flex items-center gap-2 ${activeFileIndex === idx
-                                            ? 'bg-[#00f5ff]/10 text-[#00f5ff] border border-[#00f5ff]/20'
-                                            : 'text-white/40 hover:bg-white/5 hover:text-white/70'
-                                            }`}
-                                    >
-                                        <FileCode className="w-3.5 h-3.5 shrink-0" />
-                                        {file.name}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </aside>
-
-                {/* ── Column 2: Stage (Toggleable) ── */}
-                <main className="col-span-6 flex flex-col gap-4 overflow-hidden">
+                {/* ── Column 1: Stage (Toggleable Preview / Code+Explorer) ── */}
+                <main className="col-span-8 flex flex-col gap-4 overflow-hidden">
                     <div className="flex bg-[#0d0d12] rounded-xl border border-white/[0.08] p-1 w-fit shrink-0">
                         <button
                             onClick={() => setViewMode('preview')}
@@ -297,33 +388,61 @@ export default function ProjectDashboard() {
 
                     <div className="flex-1 bg-[#1a1a1a] rounded-xl overflow-hidden border border-gray-800 shadow-2xl relative flex flex-col">
                         {viewMode === 'code' ? (
-                            <>
-                                <div className="h-10 bg-[#12121a] border-b border-gray-800 px-4 flex items-center justify-between shrink-0">
-                                    <div className="flex items-center gap-2">
-                                        <FileCode className="w-4 h-4 text-[#00f5ff]" />
-                                        <span className="text-xs font-mono text-gray-300">
-                                            {currentFile ? currentFile.name : 'No file selected'}
-                                        </span>
+                            <div className="flex-1 flex overflow-hidden">
+                                {/* Integrated File Explorer (Tree) */}
+                                <div className="w-56 shrink-0 bg-[#0d0d12] border-r border-white/[0.08] flex flex-col overflow-hidden">
+                                    <div className="h-10 bg-[#12121a] border-b border-white/[0.08] flex items-center px-3 gap-2">
+                                        <FolderTree className="w-3.5 h-3.5 text-[#00f5ff]/60" />
+                                        <span className="text-[10px] font-bold uppercase tracking-widest text-white/40">Explorer</span>
+                                        {activeFiles.length > 0 && (
+                                            <span className="ml-auto text-[9px] bg-white/5 text-white/30 px-1.5 py-0.5 rounded">{activeFiles.length}</span>
+                                        )}
                                     </div>
-                                    {currentFile && (
-                                        <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded text-white/30 font-mono">
-                                            {currentFile.content.split('\n').length} lines
-                                        </span>
-                                    )}
+                                    <div className="flex-1 overflow-y-auto py-1">
+                                        {activeFiles.length === 0 ? (
+                                            <div className="h-full flex flex-col items-center justify-center opacity-20 text-center p-4">
+                                                <Code2 className="w-6 h-6 mb-2" />
+                                                <p className="text-[9px] uppercase">No files yet</p>
+                                            </div>
+                                        ) : (
+                                            <FileTreeView
+                                                files={activeFiles}
+                                                activeIndex={activeFileIndex}
+                                                onSelect={setActiveFileIndex}
+                                            />
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="flex-1 overflow-auto bg-[#0a0a0a] relative">
-                                    {currentFile ? (
-                                        <pre className={`p-6 text-[11px] leading-relaxed text-gray-300 whitespace-pre ${jetBrainsMono.className}`}>
-                                            {currentFile.content}
-                                        </pre>
-                                    ) : (
-                                        <div className="absolute inset-0 flex flex-col items-center justify-center opacity-30 text-center">
-                                            <Code2 className="w-16 h-16 mb-4" />
-                                            <p className={`text-xl ${spaceGrotesk.className}`}>AWAITING CODE INFUSION</p>
+
+                                {/* Code Editor */}
+                                <div className="flex-1 flex flex-col overflow-hidden">
+                                    <div className="h-10 bg-[#12121a] border-b border-gray-800 px-4 flex items-center justify-between shrink-0">
+                                        <div className="flex items-center gap-2">
+                                            <FileCode className="w-4 h-4 text-[#00f5ff]" />
+                                            <span className="text-xs font-mono text-gray-300">
+                                                {currentFile ? currentFile.name : 'No file selected'}
+                                            </span>
                                         </div>
-                                    )}
+                                        {currentFile && (
+                                            <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded text-white/30 font-mono">
+                                                {currentFile.content.split('\n').length} lines
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex-1 overflow-auto bg-[#0a0a0a] relative">
+                                        {currentFile ? (
+                                            <pre className={`p-6 text-[11px] leading-relaxed text-gray-300 whitespace-pre ${jetBrainsMono.className}`}>
+                                                {currentFile.content}
+                                            </pre>
+                                        ) : (
+                                            <div className="absolute inset-0 flex flex-col items-center justify-center opacity-30 text-center">
+                                                <Code2 className="w-16 h-16 mb-4" />
+                                                <p className={`text-xl ${spaceGrotesk.className}`}>AWAITING CODE INFUSION</p>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                            </>
+                            </div>
                         ) : (
                             <>
                                 <div className="h-10 bg-[#12121a] border-b border-gray-800 flex items-center px-4 space-x-3 shrink-0">
@@ -366,7 +485,7 @@ export default function ProjectDashboard() {
                     </div>
                 </main>
 
-                {/* ── Column 3: Feed & Neural Controls ── */}
+                {/* ── Column 2: Feed & Neural Controls ── */}
                 <aside className="col-span-4 flex flex-col gap-4 overflow-hidden">
                     <div className="flex-1 bg-[#0d0d12] rounded-xl border border-white/[0.08] flex flex-col overflow-hidden shadow-lg">
                         <div className="h-10 bg-[#12121a] border-b border-white/[0.08] flex items-center justify-between px-4 shrink-0">
