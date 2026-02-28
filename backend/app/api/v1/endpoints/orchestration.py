@@ -84,6 +84,28 @@ async def websocket_endpoint(websocket: WebSocket, project_id: str):
         print(f"[WS] Error for project {project_id}: {e}")
         manager.disconnect(websocket, project_id)
 
+def collect_project_files(workspace_root: str) -> Dict[str, str]:
+    """Collect all files from the workspace, excluding known ignores."""
+    files = {}
+    ignore_dirs = {'.git', 'node_modules', '__pycache__', '.next', 'dist', 'build'}
+    
+    for root, dirs, filenames in os.walk(workspace_root):
+        # In-place modify dirs to skip ignore_dirs
+        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+        
+        for filename in filenames:
+            abs_path = os.path.join(root, filename)
+            rel_path = os.path.relpath(abs_path, workspace_root)
+            
+            # Skip binary files or large files if necessary, but here we take everything text-based
+            try:
+                with open(abs_path, 'r', encoding='utf-8') as f:
+                    files[rel_path] = f.read()
+            except (UnicodeDecodeError, IOError):
+                # Skip binary files or unreadable files
+                continue
+    return files
+
 async def run_real_orchestration(project_id: str, prompt: str):
     manager.running_orchestrations.add(project_id)
 
@@ -94,9 +116,42 @@ async def run_real_orchestration(project_id: str, prompt: str):
         await asyncio.sleep(0.05)
 
     workspace_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "test_workspace_loop", project_id)
-    if os.path.exists(workspace_root):
-        shutil.rmtree(workspace_root)
+    
+    # Check for existing code in DB to restore context
+    existing_files = {}
+    try:
+        client = supabase_admin or supabase
+        if client:
+            proj_data = client.table("projects").select("code_json").eq("id", project_id).single().execute()
+            if proj_data.data and proj_data.data.get("code_json"):
+                raw_code = proj_data.data["code_json"]
+                try:
+                    existing_files = json.loads(raw_code)
+                except json.JSONDecodeError:
+                    # Legacy fallback: single file page.tsx
+                    existing_files = {"src/app/page.tsx": raw_code}
+    except Exception as e:
+        print(f"Warning: Could not fetch existing project data: {e}")
+
+    # If it's a NEW generation (not a refactor/fix), we might want to clear, 
+    # but usually we want to keep it to allow incremental updates.
+    # For now, let's only clear if it's NOT a "FIX" or "UPDATE" style prompt.
+    is_update = any(kw in prompt.upper() for kw in ["FIX", "UPDATE", "REFINE", "ADD", "CHANGE", "MODIFY"])
+    
+    if not is_update:
+        if os.path.exists(workspace_root):
+            shutil.rmtree(workspace_root)
+    
     os.makedirs(workspace_root, exist_ok=True)
+    
+    # Restore existing files to disk so agents can see them
+    if existing_files:
+        for rel_path, content in existing_files.items():
+            full_path = os.path.join(workspace_root, rel_path)
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(content)
+        await send("log", {"message": f"📂 Restored {len(existing_files)} existing files from database."})
     
     retry_count = {}
     provider = "ollama"
@@ -121,25 +176,29 @@ async def run_real_orchestration(project_id: str, prompt: str):
         # [NODE 1.5]: Librarian — Project Structure Authority
         # ════════════════════════════════════════════
         await send("node_change", {"node": "Librarian"})
-        await send("log", {"message": "[Node 1.5: Librarian] Initializing project scaffold..."})
         
-        librarian = get_librarian_agent(workspace_root)
-        scaffold_report = librarian.generate_scaffolding(manifest)
-        
-        created_files = scaffold_report.get("created_files", [])
-        created_dirs = scaffold_report.get("created_dirs", [])
-        
-        await send("log", {"message": f"[Node 1.5: Librarian] Created {len(created_dirs)} directories and {len(created_files)} config files."})
-        
-        # Broadcast all Librarian-generated files to the frontend
-        for file in created_files:
-            file_path = os.path.join(workspace_root, file)
-            if os.path.exists(file_path):
-                with open(file_path, "r", encoding="utf-8") as f:
-                    code_content = f.read()
-                await send("file_commit", {"fileName": file, "code": code_content})
-        
-        await send("log", {"message": "[Node 1.5: Librarian] ✅ Project foundation complete: package.json, tsconfig, next.config, tailwind, globals.css, layout, utils."})
+        if is_update and existing_files:
+            await send("log", {"message": "[Node 1.5: Librarian] Update detected. Using existing project structure."})
+            librarian = get_librarian_agent(workspace_root)
+        else:
+            await send("log", {"message": "[Node 1.5: Librarian] Initializing project scaffold..."})
+            librarian = get_librarian_agent(workspace_root)
+            scaffold_report = librarian.generate_scaffolding(manifest)
+            
+            created_files = scaffold_report.get("created_files", [])
+            created_dirs = scaffold_report.get("created_dirs", [])
+            
+            await send("log", {"message": f"[Node 1.5: Librarian] Created {len(created_dirs)} directories and {len(created_files)} config files."})
+            
+            # Broadcast all Librarian-generated files to the frontend
+            for file in created_files:
+                file_path = os.path.join(workspace_root, file)
+                if os.path.exists(file_path):
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        code_content = f.read()
+                    await send("file_commit", {"fileName": file, "code": code_content})
+            
+            await send("log", {"message": "[Node 1.5: Librarian] ✅ Project foundation complete: package.json, tsconfig, next.config, tailwind, globals.css, layout, utils."})
         
         # ════════════════════════════════════════════
         # [NODE 6: DevOps — Terminal: npm install]
@@ -330,26 +389,30 @@ async def run_real_orchestration(project_id: str, prompt: str):
 
         await send("log", {"message": "🎉 ALL TASKS COMPLETE! ORCHESTRATION ENGINE SHUTTING DOWN."})
         
-        # Finally, concatenate the main UI components for saving to DB
-        final_code = ""
-        # Try multiple possible page paths
-        for possible_page in ["src/app/page.tsx", "app/page.tsx", "src/app/page.jsx"]:
-            index_file = os.path.join(workspace_root, possible_page)
-            if os.path.exists(index_file):
-                with open(index_file, "r") as f:
-                    final_code = f.read()
-                break
+        # Finally, gather ALL files for persistence in DB
+        project_files = collect_project_files(workspace_root)
+        files_json = json.dumps(project_files)
         
-        if final_code:
+        if project_files:
             try:
                 client = supabase_admin or supabase
                 if client:
-                    client.table("projects").update({"code_json": final_code}).eq("id", project_id).execute()
-                    await send("log", {"message": f"Project {project_id} synced back to Database."})
+                    # Update code_json with all files serialized
+                    result = client.table("projects").update({
+                        "code_json": files_json,
+                        "updated_at": datetime.utcnow().isoformat()
+                    }).eq("id", project_id).execute()
+                    
+                    if result.data:
+                        await send("log", {"message": f"✅ Project {project_id} stored in database ({len(project_files)} files)."})
+                    else:
+                        await send("log", {"message": "⚠️ Notice: Database update returned no data. Check permissions."})
+                else:
+                    await send("log", {"message": "⚠️ Supabase client not initialized. Cannot save to DB."})
             except Exception as e:
                 # Log but do not crash the orchestrated success loop
-                print(f"Warning: Could not sync final code to Supabase: {e}")
-                await send("log", {"message": "⚠️ Notice: Generated code exists but could not be saved to cloud database due to network timeout."})
+                print(f"Error: Could not sync final code to Supabase: {e}")
+                await send("log", {"message": f"⚠️ DB SYNC ERROR: {str(e)[:100]}"})
 
     except Exception as e:
         import traceback

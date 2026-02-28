@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { fetchProject } from '@/lib/api';
 
 export type OrchestrationEvent = {
     type: string;
@@ -29,6 +30,36 @@ export function useOrchestrationSocket(projectId: string) {
     const [isRunning, setIsRunning] = useState(false);
 
     const socketRef = useRef<WebSocket | null>(null);
+
+    // Load project data from DB on mount
+    useEffect(() => {
+        if (!projectId) return;
+
+        const loadProjectData = async () => {
+            try {
+                const project = await fetchProject(projectId);
+                if (project && project.code) {
+                    try {
+                        // Try parsing as JSON (multi-file format)
+                        const parsedFiles = JSON.parse(project.code);
+                        if (typeof parsedFiles === 'object' && parsedFiles !== null) {
+                            setFiles(parsedFiles);
+                        } else {
+                            // Single file fallback
+                            setFiles({ 'page.tsx': project.code });
+                        }
+                    } catch (e) {
+                        // Non-JSON fallback (legacy format)
+                        setFiles({ 'page.tsx': project.code });
+                    }
+                }
+            } catch (err) {
+                console.error('[Orchestration] Failed to load initial project data', err);
+            }
+        };
+
+        loadProjectData();
+    }, [projectId]);
 
     useEffect(() => {
         if (!projectId) return;
